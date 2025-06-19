@@ -1,5 +1,7 @@
 import numpy as np
-# from rcgp.kernels import RBFKernel
+from rcgp.kernels import RBFKernel
+from scipy.optimize import minimize
+from numpy.linalg import cholesky, solve
 
 def imq_kernel(y, x, beta, c):
     imq = beta * (1 + ((y-x)**2)/(c**2))**-0.5
@@ -7,129 +9,202 @@ def imq_kernel(y, x, beta, c):
     return imq, gradient_log_squared
 
 class GPRegressor:
-    def __init__(self, mean, kernel, noise=1e-5):
+    def __init__(self, mean=0.0, length_scale=1.0, rbf_variance=1.0, noise=1e-2):
         self.mean = mean
-        self.kernel = kernel
+        self.length_scale = length_scale
+        self.rbf_variance = rbf_variance
         self.noise = noise
-        self.is_fitted = False
+
+    def rbf_kernel(self, X1, X2, length_scale, variance):
+        """Compute the RBF kernel with variance (amplitude squared)"""
+        dists = np.sum(X1**2, axis=1)[:, None] + \
+                np.sum(X2**2, axis=1)[None, :] - \
+                2 * X1 @ X2.T
+        return variance * np.exp(-0.5 * dists / length_scale**2)
 
     def fit(self, X_train, y_train):
         self.X_train = X_train
-        self.y_train = y_train.reshape(-1, 1)
-        self.n = len(X_train)
+        self.y_train = y_train
+        y_centered = y_train - self.mean
 
-        self.m = self.mean(X_train)
-        self.K = self.kernel(X_train, X_train)
+        self.K = self.rbf_kernel(X_train, X_train, self.length_scale, self.rbf_variance)
+        self.K_noise = self.K + self.noise * np.eye(len(X_train)) + 1e-6 * np.eye(len(X_train))
 
-        self.K_noise = self.K + self.noise * np.eye(len(self.X_train)) + 1e-6
-        self.K_noise_inv = np.linalg.inv(self.K + self.noise * np.eye(len(self.X_train)))
-
-        self.is_fitted = True
+        self.L = cholesky(self.K_noise)
+        self.alpha = solve(self.L.T, solve(self.L, y_centered))
 
     def predict(self, X_test):
-        if not self.is_fitted:
-            raise RuntimeError("Model not fitted yet.")
+        K_s = self.rbf_kernel(self.X_train, X_test, self.length_scale, self.rbf_variance)
+        K_ss = self.rbf_kernel(X_test, X_test, self.length_scale, self.rbf_variance) + \
+               1e-6 * np.eye(len(X_test))
 
-        K_star = self.kernel(self.X_train, X_test)
-        K_ss = self.kernel(X_test, X_test)
+        mu = K_s.T @ self.alpha + self.mean  # Add mean back
+        v = solve(self.L, K_s)
+        cov = K_ss - v.T @ v
+        std = np.sqrt(np.diag(cov))
+        return mu, std
 
-        mu = self.mean(X_test) + K_star.T @ self.K_noise_inv @ (self.y_train - self.m)
-        cov = K_ss - K_star.T @ self.K_noise_inv @ K_star
-
-        return mu, cov
-
-    def negative_mll(self, params):
-        lengthscale, variance, noise = np.exp(params)
-        kernel = RBFKernel(lengthscale, variance)
-        K = kernel(self.X_train, self.X_train)
-        K_noise = K + noise * np.eye(len(self.X_train))
-        m = self.mean(self.X_train)
+    def log_marginal_likelihood(self, theta=None):
+        if theta is not None:
+            length_scale, noise, variance = np.exp(theta)
+            K = self.rbf_kernel(self.X_train, self.X_train, length_scale, variance) + \
+                noise * np.eye(len(self.X_train))
+            y_centered = self.y_train - self.mean
+        else:
+            K = self.K
+            y_centered = self.y_train - self.mean
 
         try:
-            K_inv = np.linalg.inv(K_noise)
-            diff = self.y_train - m
-            log_det = np.linalg.slogdet(K_noise)[1]  # More stable than np.log(det)
+            L = cholesky(K)
+        except np.linalg.LinAlgError:
+            return 1e6
 
-            mll = -0.5 * diff.T @ K_inv @ diff - 0.5 * log_det - 0.5 * self.n * np.log(2 * np.pi)
-            mll = mll.item()
+        alpha = solve(L.T, solve(L, y_centered))
+        log_det = 2 * np.sum(np.log(np.diag(L)))
+        return -0.5 * y_centered.T @ alpha - 0.5 * log_det - \
+               0.5 * len(self.X_train) * np.log(2 * np.pi)
 
-            print(f"[INFO] lengthscale={lengthscale:.3f}, variance={variance:.3f}, noise={noise:.6f}, -MLL={-mll:.3f}")
-        except np.linalg.LinAlgError as e:
-            print(f"[ERROR] LinAlg error: {e}")
-            print(f"[DEBUG] Params: lengthscale={lengthscale}, variance={variance}, noise={noise}")
-            return 1e6  # penalize bad params
+    def optimize_mll(self):
+        def objective(theta):
+          val = -self.log_marginal_likelihood(theta)
+          # print(f"Trying length_scale={np.exp(theta[0]).item():.4f}, noise={np.exp(theta[1]).item():.6f}, rbf_variance={np.exp(theta[2]).item():.4f} => Obj={val.item():.4f}")
+          return val
 
-        return -mll
+        initial_theta = np.log([self.length_scale, self.noise, self.rbf_variance])
+        res = minimize(objective, initial_theta, method='L-BFGS-B',
+                       bounds=[(np.log(1e-2), np.log(1e2)),     # length_scale
+                               (np.log(1e-5), np.log(1.0)),     # noise
+                               (np.log(1), np.log(1e2))])    # rbf_variance
 
-    def approximate_gradient(self, params, epsilon=1e-5):
-        grad = np.zeros_like(params)
-        for i in range(len(params)):
-            params_eps_plus = params.copy()
-            params_eps_minus = params.copy()
-            params_eps_plus[i] += epsilon
-            params_eps_minus[i] -= epsilon
-            f_plus = self.negative_mll(params_eps_plus)
-            f_minus = self.negative_mll(params_eps_minus)
-            grad[i] = (f_plus - f_minus) / (2 * epsilon)
-        return grad
+        self.length_scale, self.noise, self.rbf_variance = np.exp(res.x)
+        print(f"Optimized length_scale: {self.length_scale:.4f}, noise: {self.noise:.6f}, rbf_variance: {self.rbf_variance:.4f}")
+        self.fit(self.X_train, self.y_train)
 
-    def optimize_hyperparameters(self, initial_params=np.log([1.0, 1.0, 0.1]),
-                                          learning_rate=0.1,
-                                          max_iters=100,
-                                          tol=1e-4):
-        params = initial_params.copy()
-        for i in range(max_iters):
-            grad = self.approximate_gradient(params)
-            grad_norm = np.linalg.norm(grad)
+    def loo_cv(self, length_scale, rbf_variance, noise):
+        """Efficient Leave-One-Out cross-validation predictions"""
+        loo_K = self.rbf_kernel(self.X_train, self.X_train, length_scale, rbf_variance)
+        loo_K_noise = loo_K + noise * np.eye(len(self.X_train)) + 1e-6 * np.eye(len(self.X_train))
+        loo_K_noise_inv = np.linalg.inv(loo_K_noise)
+        loo_K_noise_inv_diag = np.diag(loo_K_noise_inv).reshape(-1,1)
 
-            if grad_norm < tol:
-                print(f"Converged at iteration {i}")
-                break
+        # Compute LOO predictions
+        loo_mean = self.y_train - loo_K_noise_inv @ self.y_train / loo_K_noise_inv_diag
+        loo_var = 1 / loo_K_noise_inv_diag
 
-            params -= learning_rate * grad
+        # print('loo_var', loo_var.shape)
+        # print('loo_mean', loo_mean.shape)
+        # print('self.y_train', self.y_train.shape)
 
-        lengthscale, variance, noise = np.exp(params)
-        self.kernel = RBFKernel(lengthscale, variance)
-        self.noise = noise
-        print(f"Optimized params: lengthscale={lengthscale:.3f}, variance={variance:.3f}, noise={noise:.6f}")
+        # predictive_log_prob = 0
+        # for i in range(len(loo_mean)):
+        #     loo_mean_i = self.y_train[i] - (loo_K_noise_inv @ self.y_train)[i] / loo_K_noise_inv_diag[i]
+        #     loo_var_i = 1 / loo_K_noise_inv_diag[i]
+        #     ind_plp = - 0.5 * (loo_mean_i - self.y_train[i])**2 / loo_var_i - 0.5 * np.log(loo_var_i) - 0.5 * np.log(np.pi*2)
+        #     predictive_log_prob += ind_plp
+
+        predictive_log_prob = -0.5 * np.log(loo_var) - 0.5 * (loo_mean - self.y_train)**2/loo_var - 0.5 * np.log(np.pi * 2)
+
+        return np.sum(predictive_log_prob)
+    
+    def optimize_loo_cv(self):
+        def objective(theta):
+            length_scale, rbf_variance, noise = theta
+            val = -self.loo_cv(length_scale, rbf_variance, noise)
+            print(val)
+            return val
+
+        initial_theta = np.log([self.length_scale, self.noise, self.rbf_variance])
+        res = minimize(objective, initial_theta, method='L-BFGS-B',
+                       bounds=[(np.log(1e-2), np.log(1e2)),     # length_scale
+                               (np.log(1e-3), np.log(1.0)),     # noise
+                               (np.log(1e-1), np.log(1e2))])    # rbf_variance
+
+        self.length_scale, self.noise, self.rbf_variance = np.exp(res.x)
+        print(f"Optimized length_scale: {self.length_scale:.4f}, noise: {self.noise:.6f}, rbf_variance: {self.rbf_variance:.4f}")
         self.fit(self.X_train, self.y_train)
 
 class RCGPRegressor:
-    def __init__(self, mean, kernel, noise=1e-5):
+    def __init__(self, mean=0.0, length_scale=1.0, rbf_variance=1.0, noise=1e-2, epsilon = 0.05):
         self.mean = mean
-        self.kernel = kernel
+        self.length_scale = length_scale
+        self.rbf_variance = rbf_variance
         self.noise = noise
-        self.is_fitted = False
+        self.epsilon = epsilon
+
+    def rbf_kernel(self, X1, X2, length_scale, variance):
+        """Compute the RBF kernel with variance (amplitude squared)"""
+        dists = np.sum(X1**2, axis=1)[:, None] + \
+                np.sum(X2**2, axis=1)[None, :] - \
+                2 * X1 @ X2.T
+        return variance * np.exp(-0.5 * dists / length_scale**2)
+
+    def imq_kernel(self, y, x, beta, c):
+        return beta * (1 + ((y-x)**2)/(c**2))**-0.5
+
+    def imq_gradient_log(self, y, x, beta, c):
+        return 2 * (x - y)/(c**2) * (1+(y-x)**2/(c**2))**-1
 
     def fit(self, X_train, y_train):
         self.X_train = X_train
-        self.y_train = y_train.reshape(-1, 1)
-        self.n = len(X_train)
-
-        self.m = self.mean(X_train)
-        self.K = self.kernel(X_train, X_train)
+        self.y_train = y_train
 
         beta = (self.noise / 2)**0.5
-        c = 1
+        c = np.quantile(y_train, 1 - self.epsilon)
 
-        w, gradient_log_squared = imq_kernel(self.y_train, self.m, beta, c)
+        self.w, self.imq_gradient_log_squared = imq_kernel(y_train, self.mean, beta, c)
 
-        self.mw = self.m + self.noise * gradient_log_squared
-        self.Jw = (self.noise/2) * np.diag((w**-2).flatten())
+        self.mw = self.mean + self.noise * self.imq_gradient_log_squared
+        self.Jw = (self.noise/2) * np.diag((self.w**-2).flatten())
 
-        self.is_fitted = True
+        self.K = self.rbf_kernel(X_train, X_train, self.length_scale, self.rbf_variance)
+        self.Kw = self.K + self.noise * self.Jw + 1e-6 * np.eye(len(X_train))
+
+        y_centered = y_train - self.mw
+        self.L = cholesky(self.Kw)
+        self.alpha = solve(self.L.T, solve(self.L, y_centered))
 
     def predict(self, X_test):
-        if not self.is_fitted:
-            raise RuntimeError("Model not fitted yet.")
+        K_s = self.rbf_kernel(self.X_train, X_test, self.length_scale, self.rbf_variance)
+        K_ss = self.rbf_kernel(X_test, X_test, self.length_scale, self.rbf_variance) + \
+               1e-6 * np.eye(len(X_test))
 
-        K_star = self.kernel(self.X_train, X_test)
-        K_ss = self.kernel(X_test, X_test)
+        # mu = self.mean + K_s.T @ self.alpha
+        # v = solve(self.L, K_s)
+        # cov = K_ss - v.T @ v
 
-        K_noise_w = self.K + self.noise * self.Jw
-        K_noise_w_inv = np.linalg.inv(K_noise_w)
+        mu = self.mean + K_s.T @ np.linalg.inv(self.Kw) @ (self.y_train - self.mw)
+        cov = K_ss - K_s.T @ np.linalg.inv(self.Kw) @ K_s
 
-        mu = self.mean(X_test) + K_star.T @ K_noise_w_inv @ (self.y_train - self.mw)
-        cov = K_ss - K_star.T @ K_noise_w_inv @ K_star
+        std = np.sqrt(np.diag(cov))
+        return mu, std
+    
+    def loo_cv(self, length_scale, rbf_variance, noise):
+        """Efficient Leave-One-Out cross-validation predictions"""
+        loo_K = self.rbf_kernel(self.X_train, self.X_train, length_scale, rbf_variance)
+        loo_Jw = (noise/2) * np.diag((self.w**-2).flatten())
+        loo_Kw = loo_K + noise * loo_Jw + 1e-6 * np.eye(len(self.X_train))
+        loo_Kw_inv = np.linalg.inv(loo_Kw)
+        loo_Kw_inv_diag = np.diag(loo_Kw_inv).reshape(-1,1)
 
-        return mu, cov
+        z = self.y_train - self.mean - noise * self.imq_gradient_log_squared
+
+        # Compute LOO predictions
+        loo_mean = z + self.mean - loo_Kw_inv @ z / loo_Kw_inv_diag
+        loo_var = (1 / loo_Kw_inv_diag) - (noise**4 / 2) * self.w**-2 + noise**2
+
+        # print('loo_var', loo_var.shape)
+        # print('loo_mean', loo_mean.shape)
+        # print('self.y_train', self.y_train.shape)
+
+        # predictive_log_prob = 0
+        # for i in range(len(loo_mean)):
+        #     loo_mean_i = self.y_train[i] - (loo_K_noise_inv @ self.y_train)[i] / loo_K_noise_inv_diag[i]
+        #     loo_var_i = 1 / loo_K_noise_inv_diag[i]
+        #     ind_plp = - 0.5 * (loo_mean_i - self.y_train[i])**2 / loo_var_i - 0.5 * np.log(loo_var_i) - 0.5 * np.log(np.pi*2)
+        #     predictive_log_prob += ind_plp
+
+        predictive_log_prob = -0.5 * np.log(loo_var) - 0.5 * (loo_mean - self.y_train)**2/loo_var - 0.5 * np.log(np.pi * 2)
+
+        return np.sum(predictive_log_prob)
+    
+    
