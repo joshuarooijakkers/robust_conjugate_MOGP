@@ -9,7 +9,7 @@ def imq_kernel(y, x, beta, c):
     return imq, gradient_log_squared
 
 class GPRegressor:
-    def __init__(self, mean=0.0, length_scale=1.0, rbf_variance=1.0, noise=1e-2):
+    def __init__(self, mean, length_scale=1.0, rbf_variance=1.0, noise=1e-2):
         self.mean = mean
         self.length_scale = length_scale
         self.rbf_variance = rbf_variance
@@ -25,7 +25,8 @@ class GPRegressor:
     def fit(self, X_train, y_train):
         self.X_train = X_train
         self.y_train = y_train
-        y_centered = y_train - self.mean
+        self.mean_train = self.mean(X_train)
+        y_centered = y_train - self.mean_train
 
         self.K = self.rbf_kernel(X_train, X_train, self.length_scale, self.rbf_variance)
         self.K_noise = self.K + self.noise * np.eye(len(X_train)) + 1e-6 * np.eye(len(X_train))
@@ -38,7 +39,7 @@ class GPRegressor:
         K_ss = self.rbf_kernel(X_test, X_test, self.length_scale, self.rbf_variance) + \
                1e-6 * np.eye(len(X_test))
 
-        mu = K_s.T @ self.alpha + self.mean  # Add mean back
+        mu = K_s.T @ self.alpha + self.mean(X_test)  # Add mean back
         v = solve(self.L, K_s)
         cov = K_ss - v.T @ v
         std = np.sqrt(np.diag(cov))
@@ -49,10 +50,10 @@ class GPRegressor:
             length_scale, noise, variance = np.exp(theta)
             K = self.rbf_kernel(self.X_train, self.X_train, length_scale, variance) + \
                 noise * np.eye(len(self.X_train))
-            y_centered = self.y_train - self.mean
+            y_centered = self.y_train - self.mean_train
         else:
             K = self.K
-            y_centered = self.y_train - self.mean
+            y_centered = self.y_train - self.mean_train
 
         try:
             L = cholesky(K)
@@ -124,7 +125,7 @@ class GPRegressor:
         self.fit(self.X_train, self.y_train)
 
 class RCGPRegressor:
-    def __init__(self, mean=0.0, length_scale=1.0, rbf_variance=1.0, noise=1e-2, epsilon = 0.05):
+    def __init__(self, mean, length_scale=1.0, rbf_variance=1.0, noise=1e-2, epsilon = 0.05):
         self.mean = mean
         self.length_scale = length_scale
         self.rbf_variance = rbf_variance
@@ -147,13 +148,14 @@ class RCGPRegressor:
     def fit(self, X_train, y_train):
         self.X_train = X_train
         self.y_train = y_train
+        self.mean_train = self.mean(X_train)
 
         beta = (self.noise / 2)**0.5
         c = np.quantile(y_train, 1 - self.epsilon)
 
-        self.w, self.imq_gradient_log_squared = imq_kernel(y_train, self.mean, beta, c)
+        self.w, self.imq_gradient_log_squared = imq_kernel(y_train, self.mean_train, beta, c)
 
-        self.mw = self.mean + self.noise * self.imq_gradient_log_squared
+        self.mw = self.mean_train + self.noise * self.imq_gradient_log_squared
         self.Jw = (self.noise/2) * np.diag((self.w**-2).flatten())
 
         self.K = self.rbf_kernel(X_train, X_train, self.length_scale, self.rbf_variance)
@@ -172,7 +174,7 @@ class RCGPRegressor:
         # v = solve(self.L, K_s)
         # cov = K_ss - v.T @ v
 
-        mu = self.mean + K_s.T @ np.linalg.inv(self.Kw) @ (self.y_train - self.mw)
+        mu = self.mean(X_test) + K_s.T @ np.linalg.inv(self.Kw) @ (self.y_train - self.mw)
         cov = K_ss - K_s.T @ np.linalg.inv(self.Kw) @ K_s
 
         std = np.sqrt(np.diag(cov))
@@ -186,10 +188,10 @@ class RCGPRegressor:
         loo_Kw_inv = np.linalg.inv(loo_Kw)
         loo_Kw_inv_diag = np.diag(loo_Kw_inv).reshape(-1,1)
 
-        z = self.y_train - self.mean - noise * self.imq_gradient_log_squared
+        z = self.y_train - self.mean_train - noise * self.imq_gradient_log_squared
 
         # Compute LOO predictions
-        loo_mean = z + self.mean - loo_Kw_inv @ z / loo_Kw_inv_diag
+        loo_mean = z + self.mean_train - loo_Kw_inv @ z / loo_Kw_inv_diag
         loo_var = (1 / loo_Kw_inv_diag) - (noise**4 / 2) * self.w**-2 + noise**2
 
         # print('loo_var', loo_var.shape)
