@@ -42,8 +42,7 @@ class GPRegressor:
         mu = K_s.T @ self.alpha + self.mean(X_test)  # Add mean back
         v = solve(self.L, K_s)
         cov = K_ss - v.T @ v
-        std = np.sqrt(np.diag(cov))
-        return mu, std
+        return mu.reshape(-1), np.diag(cov)
 
     def log_marginal_likelihood(self, theta=None):
         if theta is not None:
@@ -178,9 +177,7 @@ class RCGPRegressor:
 
         mu = self.mean(X_test) + K_s.T @ np.linalg.inv(self.Kw) @ (self.y_train - self.mw)
         cov = K_ss - K_s.T @ np.linalg.inv(self.Kw) @ K_s
-
-        std = np.sqrt(np.diag(cov))
-        return mu, std
+        return mu.reshape(-1), np.diag(cov)
     
     def loo_cv(self, length_scale, rbf_variance, noise):
         """Efficient Leave-One-Out cross-validation predictions"""
