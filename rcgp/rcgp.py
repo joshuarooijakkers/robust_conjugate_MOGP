@@ -109,16 +109,17 @@ class GPRegressor:
     
     def optimize_loo_cv(self):
         def objective(theta):
-            length_scale, rbf_variance, noise = theta
+            length_scale, noise, rbf_variance = np.exp(theta)
             val = -self.loo_cv(length_scale, rbf_variance, noise)
             print(val)
             return val
 
         initial_theta = np.log([self.length_scale, self.noise, self.rbf_variance])
         res = minimize(objective, initial_theta, method='L-BFGS-B',
-                       bounds=[(np.log(1e-2), np.log(1e2)),     # length_scale
-                               (np.log(1e-3), np.log(1.0)),     # noise
-                               (np.log(1e-1), np.log(1e2))])    # rbf_variance
+                    #    bounds=[(np.log(1e-2), np.log(1e2)),     # length_scale
+                    #            (np.log(1e-3), np.log(1.0)),     # noise
+                    #            (np.log(1e-1), np.log(1e2))]    # rbf_variance
+        )
 
         self.length_scale, self.noise, self.rbf_variance = np.exp(res.x)
         print(f"Optimized length_scale: {self.length_scale:.4f}, noise: {self.noise:.6f}, rbf_variance: {self.rbf_variance:.4f}")
@@ -151,9 +152,11 @@ class RCGPRegressor:
         self.mean_train = self.mean(X_train)
 
         beta = (self.noise / 2)**0.5
-        c = np.quantile(y_train, 1 - self.epsilon)
+        c = np.quantile(np.abs(y_train - self.mean_train), 1 - self.epsilon)
+        print(c)
 
         self.w, self.imq_gradient_log_squared = imq_kernel(y_train, self.mean_train, beta, c)
+        # print(self.w.reshape(-1)/beta)
 
         self.mw = self.mean_train + self.noise * self.imq_gradient_log_squared
         self.Jw = (self.noise/2) * np.diag((self.w**-2).flatten())
@@ -167,8 +170,7 @@ class RCGPRegressor:
 
     def predict(self, X_test):
         K_s = self.rbf_kernel(self.X_train, X_test, self.length_scale, self.rbf_variance)
-        K_ss = self.rbf_kernel(X_test, X_test, self.length_scale, self.rbf_variance) + \
-               1e-6 * np.eye(len(X_test))
+        K_ss = self.rbf_kernel(X_test, X_test, self.length_scale, self.rbf_variance) + 1e-6 * np.eye(len(X_test))
 
         # mu = self.mean + K_s.T @ self.alpha
         # v = solve(self.L, K_s)
@@ -208,5 +210,22 @@ class RCGPRegressor:
         predictive_log_prob = -0.5 * np.log(loo_var) - 0.5 * (loo_mean - self.y_train)**2/loo_var - 0.5 * np.log(np.pi * 2)
 
         return np.sum(predictive_log_prob)
+    
+    def optimize_loo_cv(self):
+        def objective(theta):
+            length_scale, noise, rbf_variance = np.exp(theta)
+            val = -self.loo_cv(length_scale, rbf_variance, noise)
+            return val
+
+        initial_theta = np.log([self.length_scale, self.noise, self.rbf_variance])
+        res = minimize(objective, initial_theta, method='L-BFGS-B',
+                    #    bounds=[(np.log(1e-2), np.log(1e2)),     # length_scale
+                    #            (np.log(1e-3), np.log(1.0)),     # noise
+                    #            (np.log(1e-1), np.log(1e2))]    # rbf_variance
+        )
+
+        self.length_scale, self.noise, self.rbf_variance = np.exp(res.x)
+        print(f"Optimized length_scale: {self.length_scale:.4f}, noise: {self.noise:.6f}, rbf_variance: {self.rbf_variance:.4f}")
+        self.fit(self.X_train, self.y_train)
     
     
