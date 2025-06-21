@@ -152,7 +152,7 @@ class RCGPRegressor:
 
         beta = (self.noise / 2)**0.5
         c = np.quantile(np.abs(y_train - self.mean_train), 1 - self.epsilon)
-        print(c)
+        # print(c)
 
         self.w, self.imq_gradient_log_squared = imq_kernel(y_train, self.mean_train, beta, c)
         # print(self.w.reshape(-1)/beta)
@@ -208,7 +208,7 @@ class RCGPRegressor:
 
         return np.sum(predictive_log_prob)
     
-    def optimize_loo_cv(self):
+    def optimize_loo_cv(self, print_opt_param = False):
         def objective(theta):
             length_scale, noise, rbf_variance = np.exp(theta)
             val = -self.loo_cv(length_scale, rbf_variance, noise)
@@ -222,7 +222,8 @@ class RCGPRegressor:
         )
 
         self.length_scale, self.noise, self.rbf_variance = np.exp(res.x)
-        print(f"Optimized length_scale: {self.length_scale:.4f}, noise: {self.noise:.6f}, rbf_variance: {self.rbf_variance:.4f}")
+        if print_opt_param:
+            print(f"Optimized length_scale: {self.length_scale:.4f}, noise: {self.noise:.6f}, rbf_variance: {self.rbf_variance:.4f}")
         self.fit(self.X_train, self.y_train)
     
     
