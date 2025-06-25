@@ -20,6 +20,18 @@ class SineMean:
         Applies sine to the first dimension of X.
         """
         return self.amplitude * np.sin(self.frequency * X[:, [0]] + self.phase)
+    
+class LinearMean:
+    def __init__(self, slope=1.0, intercept=-0.5):
+        self.slope = slope
+        self.intercept = intercept
+
+    def __call__(self, X):
+        """
+        Compute the linear mean vector.
+        Applies y = slope * x + intercept to the first dimension of X.
+        """
+        return self.slope * X[:, [0]] + self.intercept
 
 class RBFKernel:
     def __init__(self, lengthscale=1.0, variance=1.0):
