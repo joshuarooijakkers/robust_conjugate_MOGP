@@ -4,13 +4,13 @@ from scipy.optimize import minimize
 from numpy.linalg import cholesky, solve
 
 class MOGPRegressor:
-    def __init__(self, n_outputs, mean=0.0, length_scale=1.0, noise=1e-2, a=None):
+    def __init__(self, n_outputs, mean=0.0, length_scale=1.0, noise=1e-2, A=None):
         self.D = n_outputs
         self.mean = mean
         self.length_scale = length_scale
         self.noise = noise
-        self.a = a
-        self.B = np.outer(a, a)
+        self.A = A
+        self.B = A @ A.T
 
     def rbf_kernel(self, X1, X2, length_scale):
         dists = np.sum(X1**2, axis=1)[:, None] + \
@@ -28,7 +28,6 @@ class MOGPRegressor:
         self.valid_idx = np.where(mask)[0]
         y_vec = y_vec[mask].reshape(-1, 1)
         self.y_vec = y_vec
-
         # Kernel matrix for all outputs
         full_K = np.kron(self.B, self.rbf_kernel(X_train, X_train, self.length_scale))
         noise_K = np.kron(self.noise * np.eye(self.D), np.eye(self.N))
@@ -63,14 +62,13 @@ class MOGPRegressor:
         if theta is not None:
             length_scale = np.exp(theta)[0]
             noise = np.exp(theta)[1]
-            a = theta[2:]
-            B = np.outer(a, a)
+            A = theta[2:].reshape(-1, self.D)
+            B = A @ A.T
             full_K = np.kron(B, self.rbf_kernel(self.X_train, self.X_train, length_scale))
             noise_K = np.kron(noise * np.eye(self.D), np.eye(self.N))
             K = full_K + noise_K + 1e-6 * np.eye(self.D * self.N)
         else:
             K = self.K_noise
-
         K = K[np.ix_(self.valid_idx, self.valid_idx)]
         y_centered = self.y_vec - self.mean
 
@@ -90,7 +88,7 @@ class MOGPRegressor:
 
         initial_theta = np.concatenate((
             np.log([self.length_scale, self.noise]),
-            self.a
+            self.A.reshape(-1)
         ))
 
         # bounds = [
@@ -102,11 +100,11 @@ class MOGPRegressor:
 
         self.length_scale = np.exp(res.x[0])
         self.noise = np.exp(res.x[1])
-        self.a = res.x[2:]
-        self.B = np.outer(self.a, self.a)
+        self.A = res.x[2:].reshape(-1,self.D)
+        self.B = self.A @ self.A.T
 
         print(f"Optimized length_scale: {self.length_scale:.4f}, noise: {self.noise:.6f}")
-        print(f"Optimized a: {self.a}")
+        print(f"Optimized A: {self.A}")
         print(f"Optimized B: \n{self.B}")
 
         self.fit(self.X_train, self.Y_train)
