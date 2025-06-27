@@ -27,6 +27,7 @@ class MOGPRegressor:
         mask = ~np.isnan(y_vec)
         self.valid_idx = np.where(mask)[0]
         y_vec = y_vec[mask].reshape(-1, 1)
+        
         self.y_vec = y_vec
         # Kernel matrix for all outputs
         full_K = np.kron(self.B, self.rbf_kernel(X_train, X_train, self.length_scale))
