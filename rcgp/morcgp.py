@@ -63,7 +63,7 @@ class MOGPRegressor:
         if theta is not None:
             length_scale = np.exp(theta)[0]
             noise = np.exp(theta)[1]
-            A = theta[2:].reshape(-1, self.D)
+            A = theta[2:].reshape(self.D, -1)
             B = A @ A.T
             full_K = np.kron(B, self.rbf_kernel(self.X_train, self.X_train, length_scale))
             noise_K = np.kron(noise * np.eye(self.D), np.eye(self.N))
@@ -101,7 +101,7 @@ class MOGPRegressor:
 
         self.length_scale = np.exp(res.x[0])
         self.noise = np.exp(res.x[1])
-        self.A = res.x[2:].reshape(-1,self.D)
+        self.A = res.x[2:].reshape(self.D,-1)
         self.B = self.A @ self.A.T
 
         print(f"Optimized length_scale: {self.length_scale:.4f}, noise: {self.noise:.6f}")
