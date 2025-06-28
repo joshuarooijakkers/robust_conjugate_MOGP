@@ -3,6 +3,11 @@ from rcgp.kernels import RBFKernel
 from scipy.optimize import minimize
 from numpy.linalg import cholesky, solve
 
+def imq_kernel(y, x, beta, c):
+    imq = beta * (1 + ((y-x)**2)/(c**2))**(-0.5)
+    gradient_log_squared = 2 * (x - y)/(c**2) * (1+(y-x)**2/(c**2))**-1
+    return imq, gradient_log_squared
+
 class MOGPRegressor:
     def __init__(self, n_outputs, mean=0.0, length_scale=1.0, noise=1e-2, A=None):
         self.D = n_outputs
@@ -119,7 +124,6 @@ class MORCGPRegressor_PM:
         self.noise = noise
         self.A = A
         self.B = A @ A.T
-        print(self.B.shape)
         self.epsilon = epsilon
 
     def rbf_kernel(self, X1, X2, length_scale):
@@ -129,12 +133,6 @@ class MORCGPRegressor_PM:
                 2 * X1 @ X2.T
         return np.exp(-0.5 * dists / length_scale**2)
 
-    def imq_kernel(self, y, x, beta, c):
-        return beta * (1 + ((y-x)**2)/(c**2))**-0.5
-
-    def imq_gradient_log(self, y, x, beta, c):
-        return 2 * (x - y)/(c**2) * (1+(y-x)**2/(c**2))**-1
-
     def fit(self, X_train, Y_train):
         self.X_train = X_train
         self.Y_train = Y_train
@@ -143,10 +141,13 @@ class MORCGPRegressor_PM:
         self.y_vec = Y_train.T.flatten().reshape(self.N * self.D, 1)
 
         beta = (self.noise / 2)**0.5
-        c = np.quantile(self.y_vec, 1 - self.epsilon)
 
-        self.mw = self.mean + self.noise * self.imq_gradient_log(self.y_vec, self.mean, beta, c)
-        self.Jw = (self.noise/2) * np.diag((self.imq_kernel(self.y_vec, self.mean, beta, c)**-2).flatten())
+        c = np.quantile(self.Y_train, 1 - self.epsilon, axis=0).reshape(-1,1)
+
+        w, gradient_log_squared = imq_kernel(self.y_vec, self.mean, beta, np.kron(c, np.ones((self.N, 1))))
+
+        self.mw = self.mean + self.noise * gradient_log_squared
+        self.Jw = (self.noise/2) * np.diag((w**-2).flatten())
 
         self.K = np.kron(self.B, self.rbf_kernel(X_train, X_train, self.length_scale))
         self.Kw = self.K + np.kron(self.noise * np.eye(self.D), np.eye(self.N)) @ self.Jw + 1e-6 * np.eye(self.D * self.N)
@@ -160,7 +161,7 @@ class MORCGPRegressor_PM:
         K_s = np.kron(self.B, self.rbf_kernel(self.X_train, X_test, self.length_scale))
         K_ss = np.kron(self.B, self.rbf_kernel(X_test, X_test, self.length_scale)) + 1e-6 * np.eye(len(X_test) * self.D)
 
-        mu = K_s.T @ self.alpha + self.mean  # Add mean back
+        mu = K_s.T @ self.alpha + self.mean
         v = solve(self.L, K_s)
         cov = K_ss - v.T @ v
         std = np.sqrt(np.diag(cov))
