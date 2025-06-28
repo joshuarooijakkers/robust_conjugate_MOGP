@@ -138,27 +138,34 @@ class MORCGPRegressor_PM:
         self.Y_train = Y_train
         self.N, _ = Y_train.shape
 
-        self.y_vec = Y_train.T.flatten().reshape(self.N * self.D, 1)
+        y_vec = Y_train.T.flatten()
+        mask = ~np.isnan(y_vec)
+        self.valid_idx = np.where(mask)[0]
+        self.y_vec = y_vec.reshape(-1, 1)[mask,:]
 
         beta = (self.noise / 2)**0.5
+        c = np.nanquantile(self.Y_train, 1 - self.epsilon, axis=0).reshape(-1,1)
+        c_full = np.kron(c, np.ones((self.N, 1))) # shape (200, 1)
+        c_valid = c_full[mask]
 
-        c = np.quantile(self.Y_train, 1 - self.epsilon, axis=0).reshape(-1,1)
-
-        w, gradient_log_squared = imq_kernel(self.y_vec, self.mean, beta, np.kron(c, np.ones((self.N, 1))))
+        w_valid, gradient_log_squared_valid = imq_kernel(self.y_vec, self.mean, beta, c_valid)
+        w, gradient_log_squared = np.full((self.N*self.D, 1), np.nan), np.full((self.N*self.D, 1), np.nan)
+        w[mask] = w_valid
+        gradient_log_squared[mask] = gradient_log_squared_valid
 
         self.mw = self.mean + self.noise * gradient_log_squared
         self.Jw = (self.noise/2) * np.diag((w**-2).flatten())
 
         self.K = np.kron(self.B, self.rbf_kernel(X_train, X_train, self.length_scale))
-        self.Kw = self.K + np.kron(self.noise * np.eye(self.D), np.eye(self.N)) @ self.Jw + 1e-6 * np.eye(self.D * self.N)
+        self.Kw = (self.K + np.kron(self.noise * np.eye(self.D), np.eye(self.N)) @ self.Jw + 1e-6 * np.eye(self.D * self.N))[np.ix_(mask, mask)]
 
-        y_centered_w = self.y_vec - self.mw
+        y_centered_w = self.y_vec - self.mw[mask, :]
 
         self.L = cholesky(self.Kw)
         self.alpha = solve(self.L.T, solve(self.L, y_centered_w))
 
     def predict(self, X_test):
-        K_s = np.kron(self.B, self.rbf_kernel(self.X_train, X_test, self.length_scale))
+        K_s = (np.kron(self.B, self.rbf_kernel(self.X_train, X_test, self.length_scale)))[self.valid_idx, :]
         K_ss = np.kron(self.B, self.rbf_kernel(X_test, X_test, self.length_scale)) + 1e-6 * np.eye(len(X_test) * self.D)
 
         mu = K_s.T @ self.alpha + self.mean
