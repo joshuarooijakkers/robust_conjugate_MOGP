@@ -109,3 +109,63 @@ class MOGPRegressor:
         print(f"Optimized B: \n{self.B}")
 
         self.fit(self.X_train, self.Y_train)
+
+
+class MORCGPRegressor_PM:
+    def __init__(self, n_outputs, mean=0.0, length_scale=1.0, noise=1e-2, A = None, epsilon = 0.05):
+        self.D = n_outputs
+        self.mean = mean
+        self.length_scale = length_scale
+        self.noise = noise
+        self.A = A
+        self.B = A @ A.T
+        print(self.B.shape)
+        self.epsilon = epsilon
+
+    def rbf_kernel(self, X1, X2, length_scale):
+        """Compute the RBF kernel with variance (amplitude squared)"""
+        dists = np.sum(X1**2, axis=1)[:, None] + \
+                np.sum(X2**2, axis=1)[None, :] - \
+                2 * X1 @ X2.T
+        return np.exp(-0.5 * dists / length_scale**2)
+
+    def imq_kernel(self, y, x, beta, c):
+        return beta * (1 + ((y-x)**2)/(c**2))**-0.5
+
+    def imq_gradient_log(self, y, x, beta, c):
+        return 2 * (x - y)/(c**2) * (1+(y-x)**2/(c**2))**-1
+
+    def fit(self, X_train, Y_train):
+        self.X_train = X_train
+        self.Y_train = Y_train
+        self.N, _ = Y_train.shape
+
+        self.y_vec = Y_train.T.flatten().reshape(self.N * self.D, 1)
+
+        beta = (self.noise / 2)**0.5
+        c = np.quantile(self.y_vec, 1 - self.epsilon)
+
+        self.mw = self.mean + self.noise * self.imq_gradient_log(self.y_vec, self.mean, beta, c)
+        self.Jw = (self.noise/2) * np.diag((self.imq_kernel(self.y_vec, self.mean, beta, c)**-2).flatten())
+
+        self.K = np.kron(self.B, self.rbf_kernel(X_train, X_train, self.length_scale))
+        self.Kw = self.K + np.kron(self.noise * np.eye(self.D), np.eye(self.N)) @ self.Jw + 1e-6 * np.eye(self.D * self.N)
+
+        y_centered_w = self.y_vec - self.mw
+
+        self.L = cholesky(self.Kw)
+        self.alpha = solve(self.L.T, solve(self.L, y_centered_w))
+
+    def predict(self, X_test):
+        K_s = np.kron(self.B, self.rbf_kernel(self.X_train, X_test, self.length_scale))
+        K_ss = np.kron(self.B, self.rbf_kernel(X_test, X_test, self.length_scale)) + 1e-6 * np.eye(len(X_test) * self.D)
+
+        mu = K_s.T @ self.alpha + self.mean  # Add mean back
+        v = solve(self.L, K_s)
+        cov = K_ss - v.T @ v
+        std = np.sqrt(np.diag(cov))
+
+        mu = mu.reshape(self.D, -1).T
+        std = np.sqrt(np.diag(cov)).reshape(self.D, -1).T
+
+        return mu, std
