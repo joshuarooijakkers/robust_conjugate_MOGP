@@ -200,14 +200,13 @@ class MORCGPRegressor_PM:
         return mu, std
 
 class MORCGPRegressor:
-    def __init__(self, n_outputs, mean=0.0, length_scale=1.0, noise=1e-2, A = None, epsilon = 0.05):
+    def __init__(self, n_outputs, mean=0.0, length_scale=1.0, noise=1e-2, A = None):
         self.D = n_outputs
         self.mean = mean
         self.length_scale = length_scale
         self.noise = noise
         self.A = A
         self.B = A @ A.T
-        self.epsilon = epsilon
 
     def rbf_kernel(self, X1, X2, length_scale):
         """Compute the RBF kernel with variance (amplitude squared)"""
@@ -245,7 +244,7 @@ class MORCGPRegressor:
                             self.mean +
                             B_d_other_masked.reshape(1, -1) @
                             np.linalg.inv(B_other_other_masked) @
-                            obs_other_masked.reshape(-1, 1)
+                            (obs_other_masked.reshape(-1, 1) - self.mean)
                         ).item()
                         conditional_variance = (
                             B_dd -
@@ -270,13 +269,12 @@ class MORCGPRegressor:
         self.y_vec = y_vec.reshape(-1, 1)[mask,:]
 
         beta = (self.noise / 2)**0.5
-        c = np.nanquantile(self.y_vec, 1 - self.epsilon).reshape(-1,1)
 
         predictive_means, predictive_variances = self.cross_channel_predictive(Y_train)
-        w, gradient_log_squared = imq_kernel(y_vec, predictive_means.reshape((-1,1), order='F'), beta, predictive_variances.reshape((-1,1), order='F'))
+        self.w, gradient_log_squared = imq_kernel(y_vec, predictive_means.reshape((-1,1), order='F'), beta, np.sqrt(predictive_variances).reshape((-1,1), order='F'))
 
         self.mw = self.mean + self.noise * gradient_log_squared
-        self.Jw = (self.noise/2) * np.diag((w**-2).flatten())
+        self.Jw = (self.noise/2) * np.diag((self.w**-2).flatten())
 
         self.K = np.kron(self.B, self.rbf_kernel(X_train, X_train, self.length_scale))
         self.Kw = (self.K + np.kron(self.noise * np.eye(self.D), np.eye(self.N)) @ self.Jw + 1e-6 * np.eye(self.D * self.N))[np.ix_(mask, mask)]
@@ -286,7 +284,7 @@ class MORCGPRegressor:
         self.L = cholesky(self.Kw)
         self.alpha = solve(self.L.T, solve(self.L, y_centered_w))
 
-        return predictive_means
+        return predictive_means, predictive_variances
 
     def predict(self, X_test):
         K_s = (np.kron(self.B, self.rbf_kernel(self.X_train, X_test, self.length_scale)))[self.valid_idx, :]
