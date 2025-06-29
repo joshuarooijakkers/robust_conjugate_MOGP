@@ -4,9 +4,22 @@ from scipy.optimize import minimize
 from numpy.linalg import cholesky, solve
 
 def imq_kernel(y, x, beta, c):
-    imq = beta * (1 + ((y-x)**2)/(c**2))**(-0.5)
-    gradient_log_squared = 2 * (x - y)/(c**2) * (1+(y-x)**2/(c**2))**-1
-    return imq, gradient_log_squared
+    # Element-wise difference squared
+    y, x, beta, c = y.reshape(-1), x.reshape(-1), beta, c.reshape(-1)
+    diff_sq = (y - x)**2
+    denom = (1 + diff_sq / (c**2))
+    # Compute the kernel and gradient where both x and y are not NaN
+    valid = ~np.isnan(x) & ~np.isnan(y)
+
+    # Initialize outputs with NaN
+    imq = np.full_like(x, np.nan, dtype=np.float64)
+    gradient_log_squared = np.full_like(x, np.nan, dtype=np.float64)
+
+    # Compute only where valid
+    imq[valid] = beta * denom[valid]**(-0.5)
+    gradient_log_squared[valid] = 2 * (x[valid] - y[valid]) / (c[valid]**2) * denom[valid]**(-1)
+
+    return imq.reshape(-1,1), gradient_log_squared.reshape(-1,1)
 
 def extract_and_remove_dth(matrix, d):
     row_without_diag = np.delete(matrix[d, :], d)
@@ -206,19 +219,43 @@ class MORCGPRegressor:
     def cross_channel_predictive(self, Y_train):
         B_noise = self.B + self.noise * np.eye(self.D)
         predictive_means, predictive_variances = np.zeros(Y_train.shape), np.zeros(Y_train.shape)
+        
         for i in range(self.N):
-          row = Y_train[i, :]
-          for d in range(self.D):
-            if np.isnan(Y_train[i, d]):
-                predictive_means[i,d] = np.nan
-            else:
-                obs_other = np.delete(row, d)
-                B_d_other, B_dd, B_other_other = extract_and_remove_dth(B_noise, d)
-                conditional_mean = self.mean + B_d_other.reshape(1, -1) @ np.linalg.inv(B_other_other) @ obs_other.reshape(-1, 1)
-                conditional_variance = B_dd - B_d_other.reshape(1, -1) @ np.linalg.inv(B_other_other) @ B_d_other.reshape(-1, 1)
+            row = Y_train[i, :]
+            for d in range(self.D):
+                if np.isnan(row[d]):
+                    predictive_means[i, d] = np.nan
+                    predictive_variances[i, d] = np.nan
+                else:
+                    obs_other = np.delete(row, d)
+                    B_d_other, B_dd, B_other_other = extract_and_remove_dth(B_noise, d)
 
-                predictive_means[i, d] = conditional_mean.item()
-                predictive_variances[i, d] = conditional_variance.item()
+                    # Mask to filter out NaNs
+                    mask = ~np.isnan(obs_other)
+                    if not np.any(mask):
+                        # If all values in obs_other are NaN
+                        conditional_mean = self.mean
+                        conditional_variance = B_dd
+                    else:
+                        B_d_other_masked = B_d_other[mask]
+                        B_other_other_masked = B_other_other[np.ix_(mask, mask)]
+                        obs_other_masked = obs_other[mask]
+
+                        conditional_mean = (
+                            self.mean +
+                            B_d_other_masked.reshape(1, -1) @
+                            np.linalg.inv(B_other_other_masked) @
+                            obs_other_masked.reshape(-1, 1)
+                        ).item()
+                        conditional_variance = (
+                            B_dd -
+                            B_d_other_masked.reshape(1, -1) @
+                            np.linalg.inv(B_other_other_masked) @
+                            B_d_other_masked.reshape(-1, 1)
+                        ).item()
+
+                    predictive_means[i, d] = conditional_mean
+                    predictive_variances[i, d] = conditional_variance
 
         return predictive_means, predictive_variances
 
@@ -236,7 +273,7 @@ class MORCGPRegressor:
         c = np.nanquantile(self.y_vec, 1 - self.epsilon).reshape(-1,1)
 
         predictive_means, predictive_variances = self.cross_channel_predictive(Y_train)
-        w, gradient_log_squared = imq_kernel(self.y_vec, predictive_means.reshape((-1,1), order='F'), beta, predictive_variances.reshape((-1,1), order='F'))
+        w, gradient_log_squared = imq_kernel(y_vec, predictive_means.reshape((-1,1), order='F'), beta, predictive_variances.reshape((-1,1), order='F'))
 
         self.mw = self.mean + self.noise * gradient_log_squared
         self.Jw = (self.noise/2) * np.diag((w**-2).flatten())
