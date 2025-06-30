@@ -28,6 +28,50 @@ def extract_and_remove_dth(matrix, d):
 
     return row_without_diag, diag_elem, reduced_matrix
 
+def cross_channel_predictive(Y_train, mean, B, noise):
+        N, D = Y_train.shape
+        B_noise = B + noise * np.eye(D)
+        predictive_means, predictive_variances = np.zeros(Y_train.shape), np.zeros(Y_train.shape)
+        
+        for i in range(N):
+            row = Y_train[i, :]
+            for d in range(D):
+                if np.isnan(row[d]):
+                    predictive_means[i, d] = np.nan
+                    predictive_variances[i, d] = np.nan
+                else:
+                    obs_other = np.delete(row, d)
+                    B_d_other, B_dd, B_other_other = extract_and_remove_dth(B_noise, d)
+
+                    # Mask to filter out NaNs
+                    mask = ~np.isnan(obs_other)
+                    if not np.any(mask):
+                        # If all values in obs_other are NaN
+                        conditional_mean = mean
+                        conditional_variance = B_dd
+                    else:
+                        B_d_other_masked = B_d_other[mask]
+                        B_other_other_masked = B_other_other[np.ix_(mask, mask)]
+                        obs_other_masked = obs_other[mask]
+
+                        conditional_mean = (
+                            mean +
+                            B_d_other_masked.reshape(1, -1) @
+                            np.linalg.inv(B_other_other_masked) @
+                            (obs_other_masked.reshape(-1, 1) - mean)
+                        ).item()
+                        conditional_variance = (
+                            B_dd -
+                            B_d_other_masked.reshape(1, -1) @
+                            np.linalg.inv(B_other_other_masked) @
+                            B_d_other_masked.reshape(-1, 1)
+                        ).item()
+
+                    predictive_means[i, d] = conditional_mean
+                    predictive_variances[i, d] = conditional_variance
+
+        return predictive_means, predictive_variances
+
 
 class MOGPRegressor:
     def __init__(self, n_outputs, mean=0.0, length_scale=1.0, noise=1e-2, A=None):
@@ -262,49 +306,6 @@ class MORCGPRegressor:
                 np.sum(X2**2, axis=1)[None, :] - \
                 2 * X1 @ X2.T
         return np.exp(-0.5 * dists / length_scale**2)
-    
-    def cross_channel_predictive(self, Y_train):
-        B_noise = self.B + self.noise * np.eye(self.D)
-        predictive_means, predictive_variances = np.zeros(Y_train.shape), np.zeros(Y_train.shape)
-        
-        for i in range(self.N):
-            row = Y_train[i, :]
-            for d in range(self.D):
-                if np.isnan(row[d]):
-                    predictive_means[i, d] = np.nan
-                    predictive_variances[i, d] = np.nan
-                else:
-                    obs_other = np.delete(row, d)
-                    B_d_other, B_dd, B_other_other = extract_and_remove_dth(B_noise, d)
-
-                    # Mask to filter out NaNs
-                    mask = ~np.isnan(obs_other)
-                    if not np.any(mask):
-                        # If all values in obs_other are NaN
-                        conditional_mean = self.mean
-                        conditional_variance = B_dd
-                    else:
-                        B_d_other_masked = B_d_other[mask]
-                        B_other_other_masked = B_other_other[np.ix_(mask, mask)]
-                        obs_other_masked = obs_other[mask]
-
-                        conditional_mean = (
-                            self.mean +
-                            B_d_other_masked.reshape(1, -1) @
-                            np.linalg.inv(B_other_other_masked) @
-                            (obs_other_masked.reshape(-1, 1) - self.mean)
-                        ).item()
-                        conditional_variance = (
-                            B_dd -
-                            B_d_other_masked.reshape(1, -1) @
-                            np.linalg.inv(B_other_other_masked) @
-                            B_d_other_masked.reshape(-1, 1)
-                        ).item()
-
-                    predictive_means[i, d] = conditional_mean
-                    predictive_variances[i, d] = conditional_variance
-
-        return predictive_means, predictive_variances
 
     def fit(self, X_train, Y_train):
         self.X_train = X_train
@@ -318,7 +319,7 @@ class MORCGPRegressor:
 
         beta = (self.noise / 2)**0.5
 
-        predictive_means, predictive_variances = self.cross_channel_predictive(Y_train)
+        predictive_means, predictive_variances = cross_channel_predictive(Y_train, self.mean, self.B, self.noise)
         self.w, gradient_log_squared = imq_kernel(y_vec, predictive_means.reshape((-1,1), order='F'), beta, np.sqrt(predictive_variances).reshape((-1,1), order='F'))
 
         self.mw = self.mean + self.noise * gradient_log_squared

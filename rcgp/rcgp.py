@@ -182,7 +182,7 @@ class RCGPRegressor:
         loo_K = self.rbf_kernel(self.X_train, self.X_train, length_scale, rbf_variance)
 
         beta = (noise / 2)**0.5
-        loo_w, loo_gradient_log_squared = imq_kernel(self.X_train, self.mean_train, beta, self.c)
+        loo_w, loo_gradient_log_squared = imq_kernel(self.y_train, self.mean_train, beta, self.c)
 
         loo_Jw = (noise/2) * np.diag((loo_w**-2).flatten())
         loo_Kw = loo_K + noise * loo_Jw + 1e-6 * np.eye(len(self.X_train))
