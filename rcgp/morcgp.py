@@ -50,9 +50,9 @@ class MOGPRegressor:
 
         # Flatten Y_train.T and mask out NaNs
         y_vec = Y_train.T.flatten()
-        mask = ~np.isnan(y_vec)
-        self.valid_idx = np.where(mask)[0]
-        y_vec = y_vec[mask].reshape(-1, 1)
+        self.mask = ~np.isnan(y_vec)
+        self.valid_idx = np.where(self.mask)[0]
+        y_vec = y_vec[self.mask].reshape(-1, 1)
         
         self.y_vec = y_vec
         # Kernel matrix for all outputs
@@ -61,7 +61,7 @@ class MOGPRegressor:
         K = full_K + noise_K + 1e-6 * np.eye(self.D * self.N)
 
         # Subset kernel matrix and solve only for valid indices
-        self.K_noise = K[np.ix_(mask, mask)]
+        self.K_noise = K[np.ix_(self.mask, self.mask)]
         y_centered = self.y_vec - self.mean
 
         self.L = cholesky(self.K_noise)
@@ -124,6 +124,54 @@ class MOGPRegressor:
         # ] + [(np.log(1e-1), np.log(5))] * len(self.a)
 
         res = minimize(objective, initial_theta, method='L-BFGS-B')
+
+        self.length_scale = np.exp(res.x[0])
+        self.noise = np.exp(res.x[1])
+        self.A = res.x[2:].reshape(self.D,-1)
+        self.B = self.A @ self.A.T
+
+        print(f"Optimized length_scale: {self.length_scale:.4f}, noise: {self.noise:.6f}")
+        print(f"Optimized A: {self.A}")
+        print(f"Optimized B: \n{self.B}")
+
+        self.fit(self.X_train, self.Y_train)
+
+    def loo_cv(self, length_scale, noise, A):
+        B = A @ A.T
+        loo_K = np.kron(B, self.rbf_kernel(self.X_train, self.X_train, length_scale))
+        loo_K_noise = loo_K + noise * np.eye(self.D * self.N) + 1e-6 * np.eye(self.D * self.N)
+        loo_K_noise_inv = np.linalg.inv(loo_K_noise[np.ix_(self.mask, self.mask)])
+        loo_K_noise_inv_diag = np.diag(loo_K_noise_inv).reshape(-1,1)
+
+        # Compute LOO predictions
+        loo_mean = self.y_vec - loo_K_noise_inv @ self.y_vec / loo_K_noise_inv_diag
+        loo_var = 1 / loo_K_noise_inv_diag
+
+        # print('loo_var', loo_var.shape)
+        # print('loo_mean', loo_mean.shape)
+        # print('self.y_train', self.y_train.shape)
+
+        predictive_log_prob = -0.5 * np.log(loo_var) - 0.5 * (loo_mean - self.y_vec)**2/loo_var - 0.5 * np.log(np.pi * 2)
+
+        return np.sum(predictive_log_prob)
+    
+    def optimize_loo_cv(self):
+        def objective(theta):
+            length_scale, noise = np.exp(theta[:2])
+            A = theta[2:].reshape(self.D, -1)
+            val = -self.loo_cv(length_scale, noise, A)
+            print(-val)
+            return val
+
+        initial_theta = np.concatenate((
+            np.log([self.length_scale, self.noise]),
+            self.A.reshape(-1)
+        ))
+        res = minimize(objective, initial_theta, method='L-BFGS-B',
+                    #    bounds=[(np.log(1e-2), np.log(1e2)),     # length_scale
+                    #            (np.log(1e-3), np.log(1.0)),     # noise
+                    #            (np.log(1e-1), np.log(1e2))]    # rbf_variance
+        )
 
         self.length_scale = np.exp(res.x[0])
         self.noise = np.exp(res.x[1])
