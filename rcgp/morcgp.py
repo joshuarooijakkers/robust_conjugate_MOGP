@@ -348,3 +348,35 @@ class MORCGPRegressor:
         std = np.sqrt(np.diag(cov)).reshape(self.D, -1).T
 
         return mu, std
+    
+    def loo_cv(self, length_scale, noise, A, weighted=False):
+        
+        B = A @ A.T
+        loo_K = np.kron(B, self.rbf_kernel(self.X_train, self.X_train, length_scale))
+
+        predictive_means, predictive_variances = cross_channel_predictive(self.Y_train, self.mean, B, noise)
+
+        beta = (noise / 2)**0.5
+
+        loo_w, loo_gradient_log_squared = imq_kernel(y_vec, predictive_means.reshape((-1,1), order='F'), beta, np.sqrt(predictive_variances).reshape((-1,1), order='F'))
+
+        loo_Jw = (noise/2) * np.diag((loo_w**-2).flatten())
+        loo_Kw = loo_K + noise * loo_Jw + 1e-6 * np.eye(len(self.X_train))
+        loo_Kw_inv = np.linalg.inv(loo_Kw)
+        loo_Kw_inv_diag = np.diag(loo_Kw_inv).reshape(-1,1)
+
+        z = self.y_train - self.mean_train - noise * loo_gradient_log_squared
+
+        # Compute LOO predictions
+        loo_mean = z + self.mean_train - loo_Kw_inv @ z / loo_Kw_inv_diag
+        loo_var = (1 / loo_Kw_inv_diag) - (noise**4 / 2) * self.w**-2 + noise**2
+
+        self.weight = (1 + (self.y_train - self.mean_train)**2/(self.c**2))**-0.5
+
+        self.predictive_log_prob = -0.5 * np.log(loo_var) - 0.5 * (loo_mean - self.y_train)**2/loo_var - 0.5 * np.log(np.pi * 2)
+
+        if weighted:
+            result = np.dot(self.predictive_log_prob.flatten(), (self.weight).flatten())
+        else:
+            result = np.sum(self.predictive_log_prob)
+        return result
