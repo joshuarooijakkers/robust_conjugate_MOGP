@@ -313,9 +313,9 @@ class MORCGPRegressor:
         self.N, _ = Y_train.shape
 
         y_vec = Y_train.T.flatten()
-        mask = ~np.isnan(y_vec)
-        self.valid_idx = np.where(mask)[0]
-        self.y_vec = y_vec.reshape(-1, 1)[mask,:]
+        self.mask = ~np.isnan(y_vec)
+        self.valid_idx = np.where(self.mask)[0]
+        self.y_vec = y_vec.reshape(-1, 1)[self.mask,:]
 
         beta = (self.noise / 2)**0.5
 
@@ -326,9 +326,9 @@ class MORCGPRegressor:
         self.Jw = (self.noise/2) * np.diag((self.w**-2).flatten())
 
         self.K = np.kron(self.B, self.rbf_kernel(X_train, X_train, self.length_scale))
-        self.Kw = (self.K + np.kron(self.noise * np.eye(self.D), np.eye(self.N)) @ self.Jw + 1e-6 * np.eye(self.D * self.N))[np.ix_(mask, mask)]
+        self.Kw = (self.K + np.kron(self.noise * np.eye(self.D), np.eye(self.N)) @ self.Jw + 1e-6 * np.eye(self.D * self.N))[np.ix_(self.mask, self.mask)]
 
-        y_centered_w = self.y_vec - self.mw[mask, :]
+        y_centered_w = self.y_vec - self.mw[self.mask, :]
 
         self.L = cholesky(self.Kw)
         self.alpha = solve(self.L.T, solve(self.L, y_centered_w))
@@ -358,19 +358,19 @@ class MORCGPRegressor:
 
         beta = (noise / 2)**0.5
 
-        loo_w, loo_gradient_log_squared = imq_kernel(self.y_vec, predictive_means.reshape((-1,1), order='F'), beta, np.sqrt(predictive_variances).reshape((-1,1), order='F'))
+        loo_w, loo_gradient_log_squared = imq_kernel(self.Y_train.T.flatten(), predictive_means.reshape((-1,1), order='F'), beta, np.sqrt(predictive_variances).reshape((-1,1), order='F'))
         loo_Jw = (noise/2) * np.diag((loo_w**-2).flatten())
         loo_Kw = loo_K + noise * loo_Jw + 1e-6 * np.eye(self.D * self.N)
-        loo_Kw_inv = np.linalg.inv(loo_Kw)
+        loo_Kw_inv = np.linalg.inv(loo_Kw[np.ix_(self.mask, self.mask)])
         loo_Kw_inv_diag = np.diag(loo_Kw_inv).reshape(-1,1)
 
-
-
-        z = self.y_vec - self.mean - noise * loo_gradient_log_squared
+        z = self.y_vec - self.mean - noise * loo_gradient_log_squared[self.valid_idx,:]
 
         # Compute LOO predictions
         loo_mean = z + self.mean - loo_Kw_inv @ z / loo_Kw_inv_diag
-        loo_var = (1 / loo_Kw_inv_diag) - (noise**4 / 2) * self.w**-2 + noise**2
+        # print('loo_Kw_inv_diag.shape', loo_Kw_inv_diag.shape)
+        # print('self.w.shape', self.w.shape)
+        loo_var = (1 / loo_Kw_inv_diag) - (noise**4 / 2) * (self.w**-2)[self.valid_idx,:] + noise**2
 
         self.weight = loo_w / beta
 
@@ -382,12 +382,13 @@ class MORCGPRegressor:
             result = np.sum(self.predictive_log_prob)
         return result
     
-    def optimize_loo_cv(self, weighted=False):
+    def optimize_loo_cv(self, weighted=False, print_opt_param = False, print_iter_param=False):
         def objective(theta):
             length_scale, noise = np.exp(theta[:2])
             A = theta[2:].reshape(self.D, -1)
             val = -self.loo_cv(length_scale, noise, A, weighted=weighted)
-            print(-val)
+            if print_iter_param:
+                print(-val)
             return val
 
         initial_theta = np.concatenate((
@@ -405,8 +406,9 @@ class MORCGPRegressor:
         self.A = res.x[2:].reshape(self.D,-1)
         self.B = self.A @ self.A.T
 
-        print(f"Optimized length_scale: {self.length_scale:.4f}, noise: {self.noise:.6f}")
-        print(f"Optimized A: {self.A}")
-        print(f"Optimized B: \n{self.B}")
+        if print_opt_param:
+            print(f"Optimized length_scale: {self.length_scale:.4f}, noise: {self.noise:.6f}")
+            print(f"Optimized A: {self.A}")
+            print(f"Optimized B: \n{self.B}")
 
         self.fit(self.X_train, self.Y_train)
