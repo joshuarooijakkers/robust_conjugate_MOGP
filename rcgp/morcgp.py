@@ -358,7 +358,7 @@ class MORCGPRegressor:
 
         beta = (noise / 2)**0.5
 
-        loo_w, loo_gradient_log_squared = imq_kernel(self.Y_train.T.flatten(), predictive_means.reshape((-1,1), order='F'), beta, np.sqrt(predictive_variances).reshape((-1,1), order='F'))
+        loo_w, loo_gradient_log_squared = imq_kernel(self.Y_train.T.flatten(), predictive_means.reshape((-1,1), order='F'), beta, np.sqrt(np.sqrt(predictive_variances)).reshape((-1,1), order='F'))
         loo_Jw = (noise/2) * np.diag((loo_w**-2).flatten())
         loo_Kw = loo_K + noise * loo_Jw + 1e-6 * np.eye(self.D * self.N)
         loo_Kw_inv = np.linalg.inv(loo_Kw[np.ix_(self.mask, self.mask)])
