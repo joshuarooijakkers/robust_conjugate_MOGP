@@ -320,7 +320,7 @@ class MORCGPRegressor:
         beta = (self.noise / 2)**0.5
 
         predictive_means, predictive_variances = cross_channel_predictive(Y_train, self.mean, self.B, self.noise)
-        self.w, gradient_log_squared = imq_kernel(y_vec, predictive_means.reshape((-1,1), order='F'), beta, np.sqrt(predictive_variances).reshape((-1,1), order='F'))
+        self.w, gradient_log_squared = imq_kernel(y_vec, predictive_means.reshape((-1,1), order='F'), beta, np.sqrt(np.sqrt(predictive_variances)).reshape((-1,1), order='F'))
 
         self.mw = self.mean + self.noise * gradient_log_squared
         self.Jw = (self.noise/2) * np.diag((self.w**-2).flatten())
