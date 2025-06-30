@@ -358,25 +358,55 @@ class MORCGPRegressor:
 
         beta = (noise / 2)**0.5
 
-        loo_w, loo_gradient_log_squared = imq_kernel(y_vec, predictive_means.reshape((-1,1), order='F'), beta, np.sqrt(predictive_variances).reshape((-1,1), order='F'))
-
+        loo_w, loo_gradient_log_squared = imq_kernel(self.y_vec, predictive_means.reshape((-1,1), order='F'), beta, np.sqrt(predictive_variances).reshape((-1,1), order='F'))
         loo_Jw = (noise/2) * np.diag((loo_w**-2).flatten())
-        loo_Kw = loo_K + noise * loo_Jw + 1e-6 * np.eye(len(self.X_train))
+        loo_Kw = loo_K + noise * loo_Jw + 1e-6 * np.eye(self.D * self.N)
         loo_Kw_inv = np.linalg.inv(loo_Kw)
         loo_Kw_inv_diag = np.diag(loo_Kw_inv).reshape(-1,1)
 
-        z = self.y_train - self.mean_train - noise * loo_gradient_log_squared
+
+
+        z = self.y_vec - self.mean - noise * loo_gradient_log_squared
 
         # Compute LOO predictions
-        loo_mean = z + self.mean_train - loo_Kw_inv @ z / loo_Kw_inv_diag
+        loo_mean = z + self.mean - loo_Kw_inv @ z / loo_Kw_inv_diag
         loo_var = (1 / loo_Kw_inv_diag) - (noise**4 / 2) * self.w**-2 + noise**2
 
-        self.weight = (1 + (self.y_train - self.mean_train)**2/(self.c**2))**-0.5
+        self.weight = loo_w / beta
 
-        self.predictive_log_prob = -0.5 * np.log(loo_var) - 0.5 * (loo_mean - self.y_train)**2/loo_var - 0.5 * np.log(np.pi * 2)
+        self.predictive_log_prob = -0.5 * np.log(loo_var) - 0.5 * (loo_mean - self.y_vec)**2/loo_var - 0.5 * np.log(np.pi * 2)
 
         if weighted:
             result = np.dot(self.predictive_log_prob.flatten(), (self.weight).flatten())
         else:
             result = np.sum(self.predictive_log_prob)
         return result
+    
+    def optimize_loo_cv(self, weighted=False):
+        def objective(theta):
+            length_scale, noise = np.exp(theta[:2])
+            A = theta[2:].reshape(self.D, -1)
+            val = -self.loo_cv(length_scale, noise, A, weighted=weighted)
+            print(-val)
+            return val
+
+        initial_theta = np.concatenate((
+            np.log([self.length_scale, self.noise]),
+            self.A.reshape(-1)
+        ))
+        res = minimize(objective, initial_theta, method='L-BFGS-B',
+                    #    bounds=[(np.log(1e-2), np.log(1e2)),     # length_scale
+                    #            (np.log(1e-3), np.log(1.0)),     # noise
+                    #            (np.log(1e-1), np.log(1e2))]    # rbf_variance
+        )
+
+        self.length_scale = np.exp(res.x[0])
+        self.noise = np.exp(res.x[1])
+        self.A = res.x[2:].reshape(self.D,-1)
+        self.B = self.A @ self.A.T
+
+        print(f"Optimized length_scale: {self.length_scale:.4f}, noise: {self.noise:.6f}")
+        print(f"Optimized A: {self.A}")
+        print(f"Optimized B: \n{self.B}")
+
+        self.fit(self.X_train, self.Y_train)
