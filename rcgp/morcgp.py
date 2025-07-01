@@ -377,8 +377,8 @@ class MORCGPRegressor:
         if weighted:
             pred_means_loo, pred_var_loo = cross_channel_predictive(Y_train=self.Y_train, mean=self.mean, B=B_weighted, noise=noise)
             weights, _ = imq_kernel(self.Y_train.T.flatten(), pred_means_loo.reshape((-1,1), order='F'), beta, np.sqrt(pred_var_loo).reshape((-1,1), order='F'))
-            weights_01 = weights[self.valid_idx,:]/beta
-            result = np.dot(self.predictive_log_prob.flatten(), weights_01.flatten())
+            self.weights_01 = weights[self.valid_idx,:]/beta
+            result = np.dot(self.predictive_log_prob.flatten(), self.weights_01.flatten())
         else:
             result = np.sum(self.predictive_log_prob)
         return result
