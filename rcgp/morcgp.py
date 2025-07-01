@@ -320,7 +320,7 @@ class MORCGPRegressor:
         beta = (self.noise / 2)**0.5
 
         predictive_means, predictive_variances = cross_channel_predictive(Y_train, self.mean, self.B, self.noise)
-        self.w, gradient_log_squared = imq_kernel(y_vec, predictive_means.reshape((-1,1), order='F'), beta, np.sqrt(np.sqrt(predictive_variances)).reshape((-1,1), order='F'))
+        self.w, gradient_log_squared = imq_kernel(y_vec, predictive_means.reshape((-1,1), order='F'), beta, np.sqrt(predictive_variances).reshape((-1,1), order='F'))
 
         self.mw = self.mean + self.noise * gradient_log_squared
         self.Jw = (self.noise/2) * np.diag((self.w**-2).flatten())
@@ -349,7 +349,7 @@ class MORCGPRegressor:
 
         return mu, std
     
-    def loo_cv(self, length_scale, noise, A, weighted=False):
+    def loo_cv(self, length_scale, noise, A, weighted=False, B_weighted=None):
         
         B = A @ A.T
         loo_K = np.kron(B, self.rbf_kernel(self.X_train, self.X_train, length_scale))
@@ -358,7 +358,7 @@ class MORCGPRegressor:
 
         beta = (noise / 2)**0.5
 
-        loo_w, loo_gradient_log_squared = imq_kernel(self.Y_train.T.flatten(), predictive_means.reshape((-1,1), order='F'), beta, np.sqrt(np.sqrt(predictive_variances)).reshape((-1,1), order='F'))
+        loo_w, loo_gradient_log_squared = imq_kernel(self.Y_train.T.flatten(), predictive_means.reshape((-1,1), order='F'), beta, (np.sqrt(predictive_variances)).reshape((-1,1), order='F'))
         loo_Jw = (noise/2) * np.diag((loo_w**-2).flatten())
         loo_Kw = loo_K + noise * loo_Jw + 1e-6 * np.eye(self.D * self.N)
         loo_Kw_inv = np.linalg.inv(loo_Kw[np.ix_(self.mask, self.mask)])
@@ -372,21 +372,25 @@ class MORCGPRegressor:
         # print('self.w.shape', self.w.shape)
         loo_var = (1 / loo_Kw_inv_diag) - (noise**4 / 2) * (self.w**-2)[self.valid_idx,:] + noise**2
 
-        self.weight = loo_w / beta
-
         self.predictive_log_prob = -0.5 * np.log(loo_var) - 0.5 * (loo_mean - self.y_vec)**2/loo_var - 0.5 * np.log(np.pi * 2)
 
         if weighted:
-            result = np.dot(self.predictive_log_prob.flatten(), (self.weight).flatten())
+            pred_means_loo, pred_var_loo = cross_channel_predictive(Y_train=self.Y_train, mean=self.mean, B=B_weighted, noise=noise)
+            weights, _ = imq_kernel(self.Y_train.T.flatten(), pred_means_loo.reshape((-1,1), order='F'), beta, np.sqrt(pred_var_loo).reshape((-1,1), order='F'))
+            weights_01 = weights[self.valid_idx,:]/beta
+            result = np.dot(self.predictive_log_prob.flatten(), weights_01.flatten())
         else:
             result = np.sum(self.predictive_log_prob)
         return result
     
-    def optimize_loo_cv(self, weighted=False, print_opt_param = False, print_iter_param=False):
+    def optimize_loo_cv(self, weighted=False, print_opt_param = False, print_iter_param=False, B_weighted=None):
         def objective(theta):
             length_scale, noise = np.exp(theta[:2])
             A = theta[2:].reshape(self.D, -1)
-            val = -self.loo_cv(length_scale, noise, A, weighted=weighted)
+            if weighted:
+                val = -self.loo_cv(length_scale, noise, A, weighted=True, B_weighted=B_weighted)
+            else:
+                val = -self.loo_cv(length_scale, noise, A, weighted=False)
             if print_iter_param:
                 print(-val)
             return val
