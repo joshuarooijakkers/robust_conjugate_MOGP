@@ -399,7 +399,7 @@ class MORCGPRegressor:
             np.log([self.length_scale, self.noise]),
             self.A.reshape(-1)
         ))
-        res = minimize(objective, initial_theta, method='L-BFGS-B',
+        res = minimize(objective, initial_theta, method='L-BFGS-B', options={'ftol': 1e-7},
                     #    bounds=[(np.log(1e-2), np.log(1e2)),     # length_scale
                     #            (np.log(1e-3), np.log(1.0)),     # noise
                     #            (np.log(1e-1), np.log(1e2))]    # rbf_variance
