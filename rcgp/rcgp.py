@@ -159,7 +159,6 @@ class RCGPRegressor:
         self.Jw = (self.noise/2) * np.diag((self.w**-2).flatten())
 
         self.K = self.rbf_kernel(X_train, X_train, self.length_scale, self.rbf_variance)
-        print(self.w.shape)
         self.Kw = self.K + self.noise * self.Jw + 1e-6 * np.eye(len(X_train))
 
         y_centered = y_train - self.mw
