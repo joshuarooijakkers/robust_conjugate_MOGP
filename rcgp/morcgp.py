@@ -74,11 +74,17 @@ def cross_channel_predictive(Y_train, mean, B, noise):
 
 
 class MOGPRegressor:
-    def __init__(self, mean=0.0, length_scale=1.0, noise=1e-2, A=None):
+    def __init__(self, mean=0.0, length_scale=1.0, noise=1e-2, noise_constraint=False, A=None):
         self.D = A.shape[0]
         self.mean = mean
         self.length_scale = length_scale
-        self.noise = noise
+        if noise_constraint:
+            self.noise_matrix = noise * np.eye(self.D)
+        else:
+            if isinstance(noise, np.ndarray) and noise.ndim == 1 and noise.shape[0] == self.D:
+                self.noise_matrix = np.diag(noise)
+            else:
+                raise ValueError(f"`noise` must be a 1D NumPy array of length {self.D} when noise_constraint is False.")
         self.A = A
         self.B = A @ A.T
 
@@ -101,7 +107,7 @@ class MOGPRegressor:
         self.y_vec = y_vec
         # Kernel matrix for all outputs
         full_K = np.kron(self.B, self.rbf_kernel(X_train, X_train, self.length_scale))
-        noise_K = np.kron(self.noise * np.eye(self.D), np.eye(self.N))
+        noise_K = np.kron(self.noise_matrix, np.eye(self.N))
         K = full_K + noise_K + 1e-6 * np.eye(self.D * self.N)
 
         # Subset kernel matrix and solve only for valid indices
