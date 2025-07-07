@@ -403,7 +403,7 @@ class MORCGPRegressor:
 
         return mu, std
     
-    def loo_cv(self, length_scale, noise_matrix, A, weighted=False, B_weighted=None):
+    def loo_cv(self, length_scale, noise_matrix, A, weighted=False, B_weighted=None, noise_weighted=None):
         
         B = A @ A.T
         loo_K = np.kron(B, self.rbf_kernel(self.X_train, self.X_train, length_scale))
@@ -430,7 +430,7 @@ class MORCGPRegressor:
         self.predictive_log_prob = -0.5 * np.log(loo_var) - 0.5 * (loo_mean - self.y_vec)**2/loo_var - 0.5 * np.log(np.pi * 2)
 
         if weighted:
-            pred_means_loo, pred_var_loo = cross_channel_predictive(Y_train=self.Y_train, mean=self.mean, B=B_weighted, noise_matrix=noise_matrix)
+            pred_means_loo, pred_var_loo = cross_channel_predictive(Y_train=self.Y_train, mean=self.mean, B=B_weighted, noise_matrix=np.diag(noise_weighted))
             weights, _ = imq_kernel(self.Y_train.T.flatten(), pred_means_loo.reshape((-1,1), order='F'), beta, np.sqrt(pred_var_loo).reshape((-1,1), order='F'))
             self.weights_01 = weights[self.valid_idx,:]/beta.reshape(-1,1)[self.valid_idx,:]
             result = np.dot(self.predictive_log_prob.flatten(), self.weights_01.flatten())
@@ -438,7 +438,7 @@ class MORCGPRegressor:
             result = np.sum(self.predictive_log_prob)
         return result
     
-    def optimize_loo_cv(self, weighted=False, print_opt_param = False, print_iter_param=False, B_weighted=None):
+    def optimize_loo_cv(self, weighted=False, print_opt_param = False, print_iter_param=False, B_weighted=None, noise_weighted=None):
         def objective(theta):
             length_scale = np.exp(theta)[0]
             if self.noise_constraint:
@@ -450,7 +450,7 @@ class MORCGPRegressor:
                 noise_matrix = np.diag(noise)
                 A = theta[self.D+1:].reshape(self.D, -1)
             if weighted:
-                val = -self.loo_cv(length_scale, noise_matrix, A, weighted=True, B_weighted=B_weighted)
+                val = -self.loo_cv(length_scale, noise_matrix, A, weighted=True, B_weighted=B_weighted, noise_weighted=noise_weighted)
             else:
                 val = -self.loo_cv(length_scale, noise_matrix, A, weighted=False)
             if print_iter_param:
