@@ -74,13 +74,13 @@ def cross_channel_predictive(Y_train, mean, B, noise):
 
 
 class MOGPRegressor:
-    def __init__(self, mean=0.0, length_scale=1.0, noise=1e-2, noise_constraint=False, A=None):
+    def __init__(self, mean=0.0, length_scale=1.0, noise=np.array([1e-2]), A=None):
         self.D = A.shape[0]
         self.mean = mean
         self.length_scale = length_scale
-        self.noise_constraint = noise_constraint
         self.noise = noise
-        if noise_constraint:
+        self.noise_constraint = (noise.shape[0] == 1)
+        if self.noise_constraint:
             self.noise_matrix = noise * np.eye(self.D)
         else:
             if isinstance(noise, np.ndarray) and noise.ndim == 1 and noise.shape[0] == self.D:
@@ -171,18 +171,11 @@ class MOGPRegressor:
         def objective(theta):
             return -self.log_marginal_likelihood(theta)
 
-        if self.noise_constraint:
-            noise_vector = np.array([self.noise])
-        else:
-            noise_vector = self.noise
-
         initial_theta = np.concatenate((
             np.log([self.length_scale]),
-            np.log(noise_vector).ravel(),
+            np.log(self.noise).ravel(),
             self.A.reshape(-1)
         ))
-
-        print(initial_theta.shape)
 
         # bounds = [
         #     (np.log(1e-2), np.log(1e2)),     # length_scale
