@@ -74,8 +74,8 @@ def cross_channel_predictive(Y_train, mean, B, noise):
 
 
 class MOGPRegressor:
-    def __init__(self, n_outputs, mean=0.0, length_scale=1.0, noise=1e-2, A=None):
-        self.D = n_outputs
+    def __init__(self, mean=0.0, length_scale=1.0, noise=1e-2, A=None):
+        self.D = A.shape[0]
         self.mean = mean
         self.length_scale = length_scale
         self.noise = noise
