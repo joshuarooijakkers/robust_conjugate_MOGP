@@ -5,7 +5,7 @@ from numpy.linalg import cholesky, solve
 
 def imq_kernel(y, x, beta, c):
     # Element-wise difference squared
-    y, x, beta, c = y.reshape(-1), x.reshape(-1), beta, c.reshape(-1)
+    y, x, beta, c = y.reshape(-1), x.reshape(-1), beta.reshape(-1), c.reshape(-1)
     diff_sq = (y - x)**2
     denom = (1 + diff_sq / (c**2))
     # Compute the kernel and gradient where both x and y are not NaN
@@ -28,9 +28,9 @@ def extract_and_remove_dth(matrix, d):
 
     return row_without_diag, diag_elem, reduced_matrix
 
-def cross_channel_predictive(Y_train, mean, B, noise):
+def cross_channel_predictive(Y_train, mean, B, noise_matrix):
         N, D = Y_train.shape
-        B_noise = B + noise * np.eye(D)
+        B_noise = B + noise_matrix
         predictive_means, predictive_variances = np.zeros(Y_train.shape), np.zeros(Y_train.shape)
         
         for i in range(N):
@@ -364,13 +364,17 @@ class MORCGPRegressor:
         self.valid_idx = np.where(self.mask)[0]
         self.y_vec = y_vec.reshape(-1, 1)[self.mask,:]
 
-        beta = (self.noise / 2)**0.5
+        if self.noise_constraint:
+            noise_vec = self.noise * np.ones(self.N * self.D)
+        else:
+            noise_vec = np.kron(self.noise, np.ones(self.N))
+        beta = (noise_vec / 2)**0.5
 
-        predictive_means, predictive_variances = cross_channel_predictive(Y_train, self.mean, self.B, self.noise)
+        predictive_means, predictive_variances = cross_channel_predictive(Y_train, self.mean, self.B, self.noise_matrix)
         self.w, gradient_log_squared = imq_kernel(y_vec, predictive_means.reshape((-1,1), order='F'), beta, np.sqrt(predictive_variances).reshape((-1,1), order='F'))
 
-        self.mw = self.mean + self.noise * gradient_log_squared
-        self.Jw = (self.noise/2) * np.diag((self.w**-2).flatten())
+        self.mw = self.mean + noise_vec.reshape(-1,1) * gradient_log_squared
+        self.Jw = np.diag((noise_vec/2)) @ np.diag((self.w**-2).flatten())
 
         self.K = np.kron(self.B, self.rbf_kernel(X_train, X_train, self.length_scale))
         self.Kw = (self.K + np.kron(self.noise_matrix, np.eye(self.N)) @ self.Jw + 1e-6 * np.eye(self.D * self.N))[np.ix_(self.mask, self.mask)]
@@ -391,19 +395,22 @@ class MORCGPRegressor:
         cov = K_ss - v.T @ v
         std = np.sqrt(np.diag(cov))
 
+        # print('mu.shape', mu.shape)
+        # print('self.alpha.shape', self.alpha.shape)
+
         mu = mu.reshape(self.D, -1).T
         std = np.sqrt(np.diag(cov)).reshape(self.D, -1).T
 
         return mu, std
     
-    def loo_cv(self, length_scale, noise, A, weighted=False, B_weighted=None):
+    def loo_cv(self, length_scale, noise_matrix, A, weighted=False, B_weighted=None):
         
         B = A @ A.T
         loo_K = np.kron(B, self.rbf_kernel(self.X_train, self.X_train, length_scale))
 
-        predictive_means, predictive_variances = cross_channel_predictive(self.Y_train, self.mean, B, noise)
+        predictive_means, predictive_variances = cross_channel_predictive(self.Y_train, self.mean, B, noise_matrix)
 
-        beta = (noise / 2)**0.5
+        beta = np.kron((np.diag(noise_matrix) / 2)**0.5, np.ones(self.N))
 
         loo_w, loo_gradient_log_squared = imq_kernel(self.Y_train.T.flatten(), predictive_means.reshape((-1,1), order='F'), beta, (np.sqrt(predictive_variances)).reshape((-1,1), order='F'))
         loo_Jw = (noise/2) * np.diag((loo_w**-2).flatten())
