@@ -314,11 +314,19 @@ class MORCGPRegressor_PM:
         return mu, std
 
 class MORCGPRegressor:
-    def __init__(self, n_outputs, mean=0.0, length_scale=1.0, noise=1e-2, A = None):
-        self.D = n_outputs
+    def __init__(self, mean=0.0, length_scale=1.0, noise=np.array([1e-2]), A = None):
+        self.D = A.shape[0]
         self.mean = mean
         self.length_scale = length_scale
         self.noise = noise
+        self.noise_constraint = (noise.shape[0] == 1)
+        if self.noise_constraint:
+            self.noise_matrix = noise * np.eye(self.D)
+        else:
+            if isinstance(noise, np.ndarray) and noise.ndim == 1 and noise.shape[0] == self.D:
+                self.noise_matrix = np.diag(noise)
+            else:
+                raise ValueError(f"`noise` must be a 1D NumPy array of length {self.D} when noise_constraint is False.")
         self.A = A
         self.B = A @ A.T
 
@@ -348,7 +356,7 @@ class MORCGPRegressor:
         self.Jw = (self.noise/2) * np.diag((self.w**-2).flatten())
 
         self.K = np.kron(self.B, self.rbf_kernel(X_train, X_train, self.length_scale))
-        self.Kw = (self.K + np.kron(self.noise * np.eye(self.D), np.eye(self.N)) @ self.Jw + 1e-6 * np.eye(self.D * self.N))[np.ix_(self.mask, self.mask)]
+        self.Kw = (self.K + np.kron(self.noise_matrix, np.eye(self.N)) @ self.Jw + 1e-6 * np.eye(self.D * self.N))[np.ix_(self.mask, self.mask)]
 
         y_centered_w = self.y_vec - self.mw[self.mask, :]
 
