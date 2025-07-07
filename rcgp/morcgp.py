@@ -78,6 +78,8 @@ class MOGPRegressor:
         self.D = A.shape[0]
         self.mean = mean
         self.length_scale = length_scale
+        self.noise_constraint = noise_constraint
+        self.noise = noise
         if noise_constraint:
             self.noise_matrix = noise * np.eye(self.D)
         else:
@@ -138,11 +140,17 @@ class MOGPRegressor:
     def log_marginal_likelihood(self, theta=None):
         if theta is not None:
             length_scale = np.exp(theta)[0]
-            noise = np.exp(theta)[1]
-            A = theta[2:].reshape(self.D, -1)
+            if self.noise_constraint:
+                noise = np.exp(theta)[1]
+                noise_matrix = noise * np.eye(self.D)
+                A = theta[2:].reshape(self.D, -1)
+            else:
+                noise = np.exp(theta)[1:self.D+1]
+                noise_matrix = np.diag(noise)
+                A = theta[self.D+1:].reshape(self.D, -1)
             B = A @ A.T
             full_K = np.kron(B, self.rbf_kernel(self.X_train, self.X_train, length_scale))
-            noise_K = np.kron(noise * np.eye(self.D), np.eye(self.N))
+            noise_K = np.kron(noise_matrix, np.eye(self.N))
             K = full_K + noise_K + 1e-6 * np.eye(self.D * self.N)
         else:
             K = self.K_noise
@@ -163,10 +171,18 @@ class MOGPRegressor:
         def objective(theta):
             return -self.log_marginal_likelihood(theta)
 
+        if self.noise_constraint:
+            noise_vector = np.array([self.noise])
+        else:
+            noise_vector = self.noise
+
         initial_theta = np.concatenate((
-            np.log([self.length_scale, self.noise]),
+            np.log([self.length_scale]),
+            np.log(noise_vector).ravel(),
             self.A.reshape(-1)
         ))
+
+        print(initial_theta.shape)
 
         # bounds = [
         #     (np.log(1e-2), np.log(1e2)),     # length_scale
@@ -176,11 +192,18 @@ class MOGPRegressor:
         res = minimize(objective, initial_theta, method='L-BFGS-B')
 
         self.length_scale = np.exp(res.x[0])
-        self.noise = np.exp(res.x[1])
-        self.A = res.x[2:].reshape(self.D,-1)
+        if self.noise_constraint:
+            self.noise = np.exp(res.x)[1]
+            self.noise_matrix = self.noise * np.eye(self.D)
+            self.A = res.x[2:].reshape(self.D, -1)
+        else:
+            self.noise = np.exp(res.x)[1:self.D+1]
+            self.noise_matrix = np.diag(self.noise)
+            self.A = res.x[self.D+1:].reshape(self.D, -1)
         self.B = self.A @ self.A.T
 
-        print(f"Optimized length_scale: {self.length_scale:.4f}, noise: {self.noise:.6f}")
+        print(f"Optimized length_scale: {self.length_scale:.4f}")
+        print(f"Optimized noise: {self.noise}")
         print(f"Optimized A: {self.A}")
         print(f"Optimized B: \n{self.B}")
 
