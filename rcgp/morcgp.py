@@ -5,6 +5,10 @@ from numpy.linalg import cholesky, solve
 
 def imq_kernel(y, x, beta, c):
     # Element-wise difference squared
+    if np.isscalar(beta):
+        beta = np.full_like(x, beta)
+    if np.isscalar(c):
+        c = np.full_like(x, c)
     y, x, beta, c = y.reshape(-1), x.reshape(-1), beta.reshape(-1), c.reshape(-1)
     diff_sq = (y - x)**2
     denom = (1 + diff_sq / (c**2))
@@ -28,8 +32,12 @@ def extract_and_remove_dth(matrix, d):
 
     return row_without_diag, diag_elem, reduced_matrix
 
-def cross_channel_predictive(Y_train, mean, B, noise_matrix):
+def cross_channel_predictive(Y_train, mean, B, noise):
         N, D = Y_train.shape
+        if np.isscalar(noise):
+            noise_matrix = noise * np.eye(D)
+        else:
+            noise_matrix = np.diag(noise)
         B_noise = B + noise_matrix
         predictive_means, predictive_variances = np.zeros(Y_train.shape), np.zeros(Y_train.shape)
         
@@ -269,7 +277,7 @@ class MORCGPRegressor:
 
         noise_vec = np.kron((self.noise).reshape(-1,1), np.ones((self.N, 1)))
         beta = (noise_vec / 2)**0.5
-        predictive_means, predictive_variances = cross_channel_predictive(Y_train, self.mean, self.B, self.noise_matrix)
+        predictive_means, predictive_variances = cross_channel_predictive(Y_train, self.mean, self.B, self.noise)
         self.w, gradient_log_squared = imq_kernel(y_vec, predictive_means.reshape((-1,1), order='F'), beta, np.sqrt(predictive_variances).reshape((-1,1), order='F'))
 
         self.mw = self.mean + noise_vec * gradient_log_squared
@@ -306,7 +314,7 @@ class MORCGPRegressor:
         loo_K = np.kron(B, self.rbf_kernel(self.X_train, self.X_train, length_scale))
 
         noise_matrix = np.diag(noise)
-        predictive_means, predictive_variances = cross_channel_predictive(self.Y_train, self.mean, B, noise_matrix)
+        predictive_means, predictive_variances = cross_channel_predictive(self.Y_train, self.mean, B, noise)
 
         noise_vec = np.kron(noise.reshape(-1,1), np.ones((self.N,1)))
         beta = (noise_vec / 2)**0.5
@@ -324,8 +332,7 @@ class MORCGPRegressor:
         self.predictive_log_prob = -0.5 * np.log(loo_var) - 0.5 * (loo_mean - self.y_vec)**2/loo_var - 0.5 * np.log(np.pi * 2)
 
         if weighted:
-            noise_matrix_weighted = np.diag(noise_weighted)
-            pred_means_loo, pred_var_loo = cross_channel_predictive(Y_train=self.Y_train, mean=self.mean, B=B_weighted, noise_matrix=noise_matrix_weighted)
+            pred_means_loo, pred_var_loo = cross_channel_predictive(Y_train=self.Y_train, mean=self.mean, B=B_weighted, noise=noise_weighted)
             weights, _ = imq_kernel(self.Y_train.T.flatten(), pred_means_loo.reshape((-1,1), order='F'), beta, np.sqrt(pred_var_loo).reshape((-1,1), order='F'))
             self.weights_01 = weights[self.valid_idx,:]/(beta[self.valid_idx,:])
             result = np.dot(self.predictive_log_prob.flatten(), self.weights_01.flatten())
@@ -371,72 +378,9 @@ class MORCGPRegressor:
 
         self.fit(self.X_train, self.Y_train)
 
-
-def imq_kernel_deprecated(y, x, beta, c):
-    # Element-wise difference squared
-    y, x, beta, c = y.reshape(-1), x.reshape(-1), beta, c.reshape(-1)
-    diff_sq = (y - x)**2
-    denom = (1 + diff_sq / (c**2))
-    # Compute the kernel and gradient where both x and y are not NaN
-    valid = ~np.isnan(x) & ~np.isnan(y)
-
-    # Initialize outputs with NaN
-    imq = np.full_like(x, np.nan, dtype=np.float64)
-    gradient_log_squared = np.full_like(x, np.nan, dtype=np.float64)
-
-    # Compute only where valid
-    imq[valid] = beta * denom[valid]**(-0.5)
-    gradient_log_squared[valid] = 2 * (x[valid] - y[valid]) / (c[valid]**2) * denom[valid]**(-1)
-
-    return imq.reshape(-1,1), gradient_log_squared.reshape(-1,1)
-
-def cross_channel_predictive_deprecated(Y_train, mean, B, noise):
-        N, D = Y_train.shape
-        B_noise = B + noise * np.eye(D) + 1e-6 * np.eye(D)
-        predictive_means, predictive_variances = np.zeros(Y_train.shape), np.zeros(Y_train.shape)
-        
-        for i in range(N):
-            row = Y_train[i, :]
-            for d in range(D):
-                if np.isnan(row[d]):
-                    predictive_means[i, d] = np.nan
-                    predictive_variances[i, d] = np.nan
-                else:
-                    obs_other = np.delete(row, d)
-                    B_d_other, B_dd, B_other_other = extract_and_remove_dth(B_noise, d)
-
-                    # Mask to filter out NaNs
-                    mask = ~np.isnan(obs_other)
-                    if not np.any(mask):
-                        # If all values in obs_other are NaN
-                        conditional_mean = mean
-                        conditional_variance = B_dd
-                    else:
-                        B_d_other_masked = B_d_other[mask]
-                        B_other_other_masked = B_other_other[np.ix_(mask, mask)]
-                        obs_other_masked = obs_other[mask]
-
-                        conditional_mean = (
-                            mean +
-                            B_d_other_masked.reshape(1, -1) @
-                            np.linalg.inv(B_other_other_masked) @
-                            (obs_other_masked.reshape(-1, 1) - mean)
-                        ).item()
-                        conditional_variance = (
-                            B_dd -
-                            B_d_other_masked.reshape(1, -1) @
-                            np.linalg.inv(B_other_other_masked) @
-                            B_d_other_masked.reshape(-1, 1)
-                        ).item()
-
-                    predictive_means[i, d] = conditional_mean
-                    predictive_variances[i, d] = conditional_variance
-
-        return predictive_means, predictive_variances
-
 class MOGPRegressor_NC:
-    def __init__(self, n_outputs, mean=0.0, length_scale=1.0, noise=1e-2, A=None):
-        self.D = n_outputs
+    def __init__(self, mean=0.0, length_scale=1.0, noise=1e-2, A=None):
+        self.D = A.shape[0]
         self.mean = mean
         self.length_scale = length_scale
         self.noise = noise
@@ -561,8 +505,8 @@ class MOGPRegressor_NC:
         return np.sum(predictive_log_prob)
 
 class MORCGPRegressor_NC:
-    def __init__(self, n_outputs, mean=0.0, length_scale=1.0, noise=1e-2, A = None):
-        self.D = n_outputs
+    def __init__(self, mean=0.0, length_scale=1.0, noise=1e-2, A = None):
+        self.D = A.shape[0]
         self.mean = mean
         self.length_scale = length_scale
         self.noise = noise
@@ -588,8 +532,8 @@ class MORCGPRegressor_NC:
 
         beta = (self.noise / 2)**0.5
 
-        predictive_means, predictive_variances = cross_channel_predictive_deprecated(Y_train, self.mean, self.B, self.noise)
-        self.w, gradient_log_squared = imq_kernel_deprecated(y_vec, predictive_means.reshape((-1,1), order='F'), beta, np.sqrt(predictive_variances).reshape((-1,1), order='F'))
+        predictive_means, predictive_variances = cross_channel_predictive(Y_train, self.mean, self.B, self.noise)
+        self.w, gradient_log_squared = imq_kernel(y_vec, predictive_means.reshape((-1,1), order='F'), beta, np.sqrt(predictive_variances).reshape((-1,1), order='F'))
 
         self.mw = self.mean + self.noise * gradient_log_squared
         self.Jw = (self.noise/2) * np.diag((self.w**-2).flatten())
@@ -618,16 +562,16 @@ class MORCGPRegressor_NC:
 
         return mu, std
     
-    def loo_cv(self, length_scale, noise, A, weighted=False, B_weighted=None):
+    def loo_cv(self, length_scale, noise, A, weighted=False, B_weighted=None, noise_weighted=None):
         
         B = A @ A.T
         loo_K = np.kron(B, self.rbf_kernel(self.X_train, self.X_train, length_scale))
 
-        predictive_means, predictive_variances = cross_channel_predictive_deprecated(self.Y_train, self.mean, B, noise)
+        predictive_means, predictive_variances = cross_channel_predictive(self.Y_train, self.mean, B, noise)
 
         beta = (noise / 2)**0.5
 
-        loo_w, loo_gradient_log_squared = imq_kernel_deprecated(self.Y_train.T.flatten(), predictive_means.reshape((-1,1), order='F'), beta, (np.sqrt(predictive_variances)).reshape((-1,1), order='F'))
+        loo_w, loo_gradient_log_squared = imq_kernel(self.Y_train.T.flatten(), predictive_means.reshape((-1,1), order='F'), beta, (np.sqrt(predictive_variances)).reshape((-1,1), order='F'))
         loo_Jw = (noise/2) * np.diag((loo_w**-2).flatten())
         loo_Kw = loo_K + noise * loo_Jw + 1e-6 * np.eye(self.D * self.N)
         loo_Kw_inv = np.linalg.inv(loo_Kw[np.ix_(self.mask, self.mask)])
@@ -644,20 +588,20 @@ class MORCGPRegressor_NC:
         self.predictive_log_prob = -0.5 * np.log(loo_var) - 0.5 * (loo_mean - self.y_vec)**2/loo_var - 0.5 * np.log(np.pi * 2)
 
         if weighted:
-            pred_means_loo, pred_var_loo = cross_channel_predictive_deprecated(Y_train=self.Y_train, mean=self.mean, B=B_weighted, noise=noise)
-            weights, _ = imq_kernel_deprecated(self.Y_train.T.flatten(), pred_means_loo.reshape((-1,1), order='F'), beta, np.sqrt(pred_var_loo).reshape((-1,1), order='F'))
+            pred_means_loo, pred_var_loo = cross_channel_predictive(Y_train=self.Y_train, mean=self.mean, B=B_weighted, noise=noise_weighted)
+            weights, _ = imq_kernel(self.Y_train.T, pred_means_loo.reshape((-1,1), order='F'), beta, np.sqrt(pred_var_loo).reshape((-1,1), order='F'))
             self.weights_01 = weights[self.valid_idx,:]/beta
             result = np.dot(self.predictive_log_prob.flatten(), self.weights_01.flatten())
         else:
             result = np.sum(self.predictive_log_prob)
         return result
     
-    def optimize_loo_cv(self, weighted=False, print_opt_param = False, print_iter_param=False, B_weighted=None):
+    def optimize_loo_cv(self, weighted=False, print_opt_param = False, print_iter_param=False, B_weighted=None, noise_weighted=None):
         def objective(theta):
             length_scale, noise = np.exp(theta[:2])
             A = theta[2:].reshape(self.D, -1)
             if weighted:
-                val = -self.loo_cv(length_scale, noise, A, weighted=True, B_weighted=B_weighted)
+                val = -self.loo_cv(length_scale, noise, A, weighted=True, B_weighted=B_weighted, noise_weighted=noise_weighted)
             else:
                 val = -self.loo_cv(length_scale, noise, A, weighted=False)
             if print_iter_param:
