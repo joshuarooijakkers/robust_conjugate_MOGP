@@ -193,13 +193,12 @@ class RCGPRegressor:
 
         # Compute LOO predictions
         loo_mean = z + self.mean_train - loo_Kw_inv @ z / loo_Kw_inv_diag
-        loo_var = (1 / loo_Kw_inv_diag) - (noise**4 / 2) * self.w**-2 + noise**2
-
-        self.weight = (1 + (self.y_train - self.mean_train)**2/(self.c**2))**-0.5
+        loo_var = (1 / loo_Kw_inv_diag) - (noise**2 / 2) * loo_w**-2 + noise
 
         self.predictive_log_prob = -0.5 * np.log(loo_var) - 0.5 * (loo_mean - self.y_train)**2/loo_var - 0.5 * np.log(np.pi * 2)
 
         if weighted:
+            self.weight = (1 + (self.y_train - self.mean_train)**2/(self.c**2))**-0.5
             result = np.dot(self.predictive_log_prob.flatten(), (self.weight).flatten())
         else:
             result = np.sum(self.predictive_log_prob)
