@@ -149,8 +149,7 @@ class RCGPRegressor:
         self.mean_train = self.mean(X_train)
 
         self.beta = (self.noise / 2)**0.5
-        self.c = np.quantile(np.abs(y_train - self.mean_train), 1 - self.epsilon)
-        # print(self.c)
+        self.c = np.nanquantile(np.abs(y_train - self.mean_train), 1 - self.epsilon)
 
         self.w, self.imq_gradient_log_squared = imq_kernel(y_train, self.mean_train, self.beta, self.c)
         # print(self.w.reshape(-1)/beta)

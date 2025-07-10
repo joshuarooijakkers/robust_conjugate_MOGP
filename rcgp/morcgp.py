@@ -6,9 +6,11 @@ from numpy.linalg import cholesky, solve
 def imq_kernel(y, x, beta, c):
     # Element-wise difference squared
     if np.isscalar(beta):
-        beta = np.full_like(x, beta)
+        beta = np.full_like(y, beta)
     if np.isscalar(c):
-        c = np.full_like(x, c)
+        c = np.full_like(y, c)
+    if np.isscalar(x):
+        x = np.full_like(y, x)
     y, x, beta, c = y.reshape(-1), x.reshape(-1), beta.reshape(-1), c.reshape(-1)
     diff_sq = (y - x)**2
     denom = (1 + diff_sq / (c**2))
@@ -303,15 +305,14 @@ class MORCGPRegressor:
         mu = K_s.T @ self.alpha + self.mean
         v = solve(self.L, K_s)
         cov = K_ss - v.T @ v
-        std = np.sqrt(np.diag(cov))
 
         # print('mu.shape', mu.shape)
         # print('self.alpha.shape', self.alpha.shape)
 
         mu = mu.reshape(self.D, -1).T
-        std = np.sqrt(np.diag(cov)).reshape(self.D, -1).T
+        var = np.diag(cov).reshape(self.D, -1).T
 
-        return mu, std
+        return mu, var
     
     def loo_cv(self, length_scale, noise, A, weighted=False, B_weighted=None, noise_weighted=None):        
         B = A @ A.T
@@ -380,7 +381,8 @@ class MORCGPRegressor:
             print(f"Optimized A: {self.A}")
             print(f"Optimized B: \n{self.B}")
 
-        self.fit(self.X_train, self.Y_train)
+        predictive_means, predictive_variance = self.fit(self.X_train, self.Y_train)
+        return predictive_means, predictive_variance
 
 class MOGPRegressor_NC:
     def __init__(self, mean=0.0, length_scale=1.0, noise=1e-2, A=None):
@@ -559,12 +561,11 @@ class MORCGPRegressor_NC:
         mu = K_s.T @ self.alpha + self.mean
         v = solve(self.L, K_s)
         cov = K_ss - v.T @ v
-        std = np.sqrt(np.diag(cov))
 
         mu = mu.reshape(self.D, -1).T
-        std = np.sqrt(np.diag(cov)).reshape(self.D, -1).T
+        var = np.diag(cov).reshape(self.D, -1).T
 
-        return mu, std
+        return mu, var
     
     def loo_cv(self, length_scale, noise, A, weighted=False, B_weighted=None, noise_weighted=None):
         
@@ -691,9 +692,9 @@ class MORCGPRegressor_NC_fixed_weights:
         std = np.sqrt(np.diag(cov))
 
         mu = mu.reshape(self.D, -1).T
-        std = np.sqrt(np.diag(cov)).reshape(self.D, -1).T
+        var = np.diag(cov).reshape(self.D, -1).T
 
-        return mu, std
+        return mu, var
     
     def loo_cv(self, length_scale, noise, A, weighted=False):
         
@@ -818,9 +819,9 @@ class MORCGPRegressor_fixed_weights:
         # print('self.alpha.shape', self.alpha.shape)
 
         mu = mu.reshape(self.D, -1).T
-        std = np.sqrt(np.diag(cov)).reshape(self.D, -1).T
+        var = np.diag(cov).reshape(self.D, -1).T
 
-        return mu, std
+        return mu, var
     
     def loo_cv(self, length_scale, noise, A, weighted=False):        
         B = A @ A.T
@@ -890,3 +891,134 @@ class MORCGPRegressor_fixed_weights:
 
         predictive_means, predictive_variances = self.fit(self.X_train, self.Y_train, self.B, self.noise)
         return predictive_means, predictive_variances
+    
+
+class MORCGPRegressor_PM:
+    def __init__(self, mean=0.0, length_scale=1.0, noise=np.array([1e-2]), A = None, epsilons=None):
+        self.D = A.shape[0]
+        self.mean = mean
+        self.length_scale = length_scale
+        self.noise = noise
+        self.noise_matrix = np.diag(noise)
+        self.A = A
+        self.B = A @ A.T
+        self.epsilons = epsilons
+
+    def rbf_kernel(self, X1, X2, length_scale):
+        """Compute the RBF kernel with variance (amplitude squared)"""
+        dists = np.sum(X1**2, axis=1)[:, None] + \
+                np.sum(X2**2, axis=1)[None, :] - \
+                2 * X1 @ X2.T
+        return np.exp(-0.5 * dists / length_scale**2)
+
+    def fit(self, X_train, Y_train):
+        self.X_train = X_train
+        self.Y_train = Y_train
+        self.N, _ = Y_train.shape
+
+        y_vec = Y_train.T.flatten()
+        self.mask = ~np.isnan(y_vec)
+        self.valid_idx = np.where(self.mask)[0]
+        self.y_vec = y_vec.reshape(-1, 1)[self.mask,:]
+
+        noise_vec = np.kron((self.noise).reshape(-1,1), np.ones((self.N, 1)))
+        beta = (noise_vec / 2)**0.5
+
+        c = np.array([
+            np.nanquantile(self.Y_train[:, d], self.epsilons[d])
+            for d in range(self.D)
+        ])
+        self.cs = np.repeat(c, self.N).reshape(-1, 1)
+        self.w, gradient_log_squared = imq_kernel(y_vec, self.mean, beta, self.cs)
+        self.w01 = self.w[self.valid_idx,:] / beta[self.valid_idx,:]
+
+        self.mw = self.mean + noise_vec * gradient_log_squared
+        self.Jw = np.diag((noise_vec.flatten()/2)) @ np.diag((self.w**-2).flatten())
+        self.K = np.kron(self.B, self.rbf_kernel(X_train, X_train, self.length_scale))
+        self.Kw = (self.K + np.kron(self.noise_matrix, np.eye(self.N)) @ self.Jw + 1e-6 * np.eye(self.D * self.N))[np.ix_(self.mask, self.mask)]
+
+        y_centered_w = self.y_vec - self.mw[self.mask, :]
+
+        self.L = cholesky(self.Kw)
+        self.alpha = solve(self.L.T, solve(self.L, y_centered_w))
+
+    def predict(self, X_test):
+        K_s = (np.kron(self.B, self.rbf_kernel(self.X_train, X_test, self.length_scale)))[self.valid_idx, :]
+        K_ss = np.kron(self.B, self.rbf_kernel(X_test, X_test, self.length_scale)) + 1e-6 * np.eye(len(X_test) * self.D)
+
+        mu = K_s.T @ self.alpha + self.mean
+        v = solve(self.L, K_s)
+        cov = K_ss - v.T @ v
+
+        # print('mu.shape', mu.shape)
+        # print('self.alpha.shape', self.alpha.shape)
+
+        mu = mu.reshape(self.D, -1).T
+        var = np.diag(cov).reshape(self.D, -1).T
+
+        return mu, var
+    
+    def loo_cv(self, length_scale, noise, A, weighted=False):        
+        B = A @ A.T
+        loo_K = np.kron(B, self.rbf_kernel(self.X_train, self.X_train, length_scale))
+
+        noise_matrix = np.diag(noise)
+
+        noise_vec = np.kron(noise.reshape(-1,1), np.ones((self.N,1)))
+        beta = (noise_vec / 2)**0.5
+
+        loo_w, loo_gradient_log_squared = imq_kernel(self.Y_train.T.reshape(-1,1), self.mean, beta, self.cs)
+        loo_Jw = np.diag((noise_vec.flatten()/2)) @ np.diag((loo_w**-2).flatten())
+        loo_Kw = loo_K + np.kron(noise_matrix, np.eye(self.N)) @ loo_Jw + 1e-6 * np.eye(self.D * self.N)
+        loo_Kw_inv = np.linalg.inv(loo_Kw[np.ix_(self.mask, self.mask)])
+        loo_Kw_inv_diag = np.diag(loo_Kw_inv).reshape(-1,1)
+        z = self.y_vec - self.mean - (noise_vec * loo_gradient_log_squared)[self.valid_idx,:]
+
+        # Compute LOO predictions
+        loo_mean = z + self.mean - loo_Kw_inv @ z / loo_Kw_inv_diag
+        loo_var = (1 / loo_Kw_inv_diag) - ((noise_vec**2 / 2) * (loo_w**-2))[self.valid_idx] + (noise_vec.reshape(-1,1))[self.valid_idx,:]
+        self.predictive_log_prob = -0.5 * np.log(loo_var) - 0.5 * (loo_mean - self.y_vec)**2/loo_var - 0.5 * np.log(np.pi * 2)
+
+        if weighted:
+            result = np.dot(self.predictive_log_prob.flatten(), self.w01.flatten())
+        else:
+            result = np.sum(self.predictive_log_prob)
+        return result
+    
+    def optimize_loo_cv(self, weighted=False, print_opt_param = False, print_iter_param=False):
+        def objective(theta):
+            length_scale = np.exp(theta)[0]
+            noise = np.exp(theta)[1:self.D+1]
+            A = theta[self.D+1:].reshape(self.D, -1)
+            if weighted:
+                val = -self.loo_cv(length_scale, noise, A, weighted=True)
+            else:
+                val = -self.loo_cv(length_scale, noise, A, weighted=False)
+            if print_iter_param:
+                print(-val)
+            return val
+
+        initial_theta = np.concatenate((
+            np.log([self.length_scale]),
+            np.log(self.noise),
+            self.A.reshape(-1)
+        ))
+        res = minimize(objective, initial_theta, method='L-BFGS-B', tol=1e-2,
+                    #    bounds=[(np.log(1e-2), np.log(1e2)),     # length_scale
+                    #            (np.log(1e-3), np.log(1.0)),     # noise
+                    #            (np.log(1e-1), np.log(1e2))]    # rbf_variance
+        )
+
+        self.length_scale = np.exp(res.x[0])
+        self.noise = np.exp(res.x)[1:self.D+1]
+        self.noise_matrix = np.diag(self.noise)
+        self.A = res.x[self.D+1:].reshape(self.D, -1)
+        self.B = self.A @ self.A.T
+
+        if print_opt_param:
+            print(f"Optimized length_scale: {self.length_scale:.4f}")
+            print(f"Optimized noise: {self.noise}")
+            print(f"Optimized A: {self.A}")
+            print(f"Optimized B: \n{self.B}")
+
+        self.fit(self.X_train, self.Y_train)
