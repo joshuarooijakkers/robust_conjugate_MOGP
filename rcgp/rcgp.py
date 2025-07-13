@@ -158,7 +158,7 @@ class RCGPRegressor:
         self.Jw = (self.noise/2) * np.diag((self.w**-2).flatten())
 
         self.K = self.rbf_kernel(X_train, X_train, self.length_scale, self.rbf_variance)
-        self.Kw = self.K + self.noise * self.Jw + 1e-6 * np.eye(len(X_train))
+        self.Kw = self.K + self.noise * self.Jw + 1e-5 * np.eye(len(X_train))
 
         y_centered = y_train - self.mw
         self.L = cholesky(self.Kw)
@@ -184,7 +184,7 @@ class RCGPRegressor:
         loo_w, loo_gradient_log_squared = imq_kernel(self.y_train, self.mean_train, beta, self.c)
 
         loo_Jw = (noise/2) * np.diag((loo_w**-2).flatten())
-        loo_Kw = loo_K + noise * loo_Jw + 1e-6 * np.eye(len(self.X_train))
+        loo_Kw = loo_K + noise * loo_Jw + 1e-4 * np.eye(len(self.X_train))
         loo_Kw_inv = np.linalg.inv(loo_Kw)
         loo_Kw_inv_diag = np.diag(loo_Kw_inv).reshape(-1,1)
 
