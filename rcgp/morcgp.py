@@ -853,7 +853,7 @@ class MORCGPRegressor_fixed_weights:
             result = np.sum(self.predictive_log_prob)
         return result
     
-    def optimize_loo_cv(self, weighted=False, print_opt_param = False, print_iter_param=False):
+    def optimize_loo_cv(self, weighted=False, print_opt_param = False, print_iter_param=False, update_weights=True):
         def objective(theta):
             length_scale = np.exp(theta)[0]
             noise = np.exp(theta)[1:self.D+1]
@@ -888,8 +888,10 @@ class MORCGPRegressor_fixed_weights:
             print(f"Optimized noise: {self.noise}")
             print(f"Optimized A: {self.A}")
             print(f"Optimized B: \n{self.B}")
-
-        predictive_means, predictive_variances = self.fit(self.X_train, self.Y_train, self.B, self.noise)
+        if update_weights:
+            predictive_means, predictive_variances = self.fit(self.X_train, self.Y_train, self.B, self.noise)
+        else:
+            predictive_means, predictive_variances = self.fit(self.X_train, self.Y_train, self.B_weighted, self.noise_weighted)
         return predictive_means, predictive_variances
     
 
