@@ -12,6 +12,7 @@ def imq_kernel(y, x, beta, c):
     if np.isscalar(x):
         x = np.full_like(y, x)
     y, x, beta, c = y.reshape(-1), x.reshape(-1), beta.reshape(-1), c.reshape(-1)
+    print(f"y: {y.shape}, x: {x.shape}, beta: {beta.shape}, c: {c.shape}")
     diff_sq = (y - x)**2
     denom = (1 + diff_sq / (c**2))
     # Compute the kernel and gradient where both x and y are not NaN
