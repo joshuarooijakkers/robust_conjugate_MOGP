@@ -2,6 +2,8 @@ import numpy as np
 from rcgp.kernels import RBFKernel
 from scipy.optimize import minimize
 from numpy.linalg import cholesky, solve
+from scipy.linalg import cho_factor, cho_solve
+from numba import jit
 
 def imq_kernel(y, x, beta, c):
     # Element-wise difference squared
@@ -61,7 +63,7 @@ def cross_channel_predictive(Y_train, mean, B, noise):
                         conditional_variance = B_dd
                     else:
                         B_d_other_masked = B_d_other[mask]
-                        B_other_other_masked = B_other_other[np.ix_(mask, mask)] + 1e-5 * np.eye(len(B_other_other[np.ix_(mask, mask)]))
+                        B_other_other_masked = B_other_other[np.ix_(mask, mask)] + 1e-3 * np.eye(len(B_other_other[np.ix_(mask, mask)]))
                         obs_other_masked = obs_other[mask]
 
                         conditional_mean = (
@@ -82,6 +84,14 @@ def cross_channel_predictive(Y_train, mean, B, noise):
 
         return predictive_means, predictive_variances
 
+@jit(nopython=True, fastmath=True)
+def rbf_kernel(X1, X2, length_scale):
+    X1 = np.ascontiguousarray(X1)
+    X2 = np.ascontiguousarray(X2)
+    
+    dists = np.sum(X1**2, axis=1)[:, None] + \
+            np.sum(X2**2, axis=1)[None, :] - 2 * X1 @ X2.T
+    return np.exp(-0.5 * dists / length_scale**2)
 
 class MOGPRegressor:
     def __init__(self, mean=0.0, length_scale=1.0, noise=None, A=None):
@@ -393,11 +403,6 @@ class MOGPRegressor_NC:
         self.A = A
         self.B = A @ A.T
 
-    def rbf_kernel(self, X1, X2, length_scale):
-        dists = np.sum(X1**2, axis=1)[:, None] + \
-                np.sum(X2**2, axis=1)[None, :] - 2 * X1 @ X2.T
-        return np.exp(-0.5 * dists / length_scale**2)
-
     def fit(self, X_train, Y_train):
         self.X_train = X_train
         self.Y_train = Y_train
@@ -411,7 +416,7 @@ class MOGPRegressor_NC:
         
         self.y_vec = y_vec
         # Kernel matrix for all outputs
-        full_K = np.kron(self.B, self.rbf_kernel(X_train, X_train, self.length_scale))
+        full_K = np.kron(self.B, rbf_kernel(X_train, X_train, self.length_scale))
         noise_K = np.kron(self.noise * np.eye(self.D), np.eye(self.N))
         K = full_K + noise_K + 1e-6 * np.eye(self.D * self.N)
 
@@ -422,12 +427,13 @@ class MOGPRegressor_NC:
         self.L = cholesky(self.K_noise)
         self.alpha = solve(self.L.T, solve(self.L, y_centered))
 
+
     def predict(self, X_test):
         N_test = len(X_test)
-        K_s = np.kron(self.B, self.rbf_kernel(self.X_train, X_test, self.length_scale))
+        K_s = np.kron(self.B, rbf_kernel(self.X_train, X_test, self.length_scale))
         K_s = K_s[self.valid_idx, :]  # Subset only rows corresponding to observed outputs
 
-        K_ss = np.kron(self.B, self.rbf_kernel(X_test, X_test, self.length_scale)) + \
+        K_ss = np.kron(self.B, rbf_kernel(X_test, X_test, self.length_scale)) + \
                1e-6 * np.eye(N_test * self.D)
 
         mu = K_s.T @ self.alpha + self.mean
@@ -446,7 +452,7 @@ class MOGPRegressor_NC:
             noise = np.exp(theta)[1]
             A = theta[2:].reshape(self.D, -1)
             B = A @ A.T
-            full_K = np.kron(B, self.rbf_kernel(self.X_train, self.X_train, length_scale))
+            full_K = np.kron(B, rbf_kernel(self.X_train, self.X_train, length_scale))
             noise_K = np.kron(noise * np.eye(self.D), np.eye(self.N))
             K = full_K + noise_K + 1e-6 * np.eye(self.D * self.N)
         else:
@@ -493,7 +499,7 @@ class MOGPRegressor_NC:
 
     def loo_cv(self, length_scale, noise, A):
         B = A @ A.T
-        loo_K = np.kron(B, self.rbf_kernel(self.X_train, self.X_train, length_scale))
+        loo_K = np.kron(B, rbf_kernel(self.X_train, self.X_train, length_scale))
         loo_K_noise = loo_K + noise * np.eye(self.D * self.N) + 1e-6 * np.eye(self.D * self.N)
         loo_K_noise_inv = np.linalg.inv(loo_K_noise[np.ix_(self.mask, self.mask)])
         loo_K_noise_inv_diag = np.diag(loo_K_noise_inv).reshape(-1,1)
@@ -669,6 +675,7 @@ class MORCGPRegressor_NC_fixed_weights:
         self.w, self.gradient_log_squared = imq_kernel(y_vec, predictive_means.reshape((-1,1), order='F'), beta, np.sqrt(predictive_variances).reshape((-1,1), order='F'))
         self.w01 = self.w[self.valid_idx,:] / beta
 
+
         self.mw = self.mean + self.noise * self.gradient_log_squared
         self.Jw = (self.noise/2) * np.diag((self.w**-2).flatten())
 
@@ -715,14 +722,13 @@ class MORCGPRegressor_NC_fixed_weights:
         loo_var = (1 / loo_Kw_inv_diag) - (noise**2 / 2) * (self.w**-2)[self.valid_idx,:] + noise
 
         self.predictive_log_prob = -0.5 * np.log(loo_var) - 0.5 * (loo_mean - self.y_vec)**2/loo_var - 0.5 * np.log(np.pi * 2)
-
         if weighted:
             result = np.dot(self.predictive_log_prob.flatten(), self.w01.flatten())
         else:
             result = np.sum(self.predictive_log_prob)
         return result
     
-    def optimize_loo_cv(self, weighted=False, print_opt_param = False, print_iter_param=False):
+    def optimize_loo_cv(self, weighted=False, print_opt_param = False, print_iter_param=False, update_weights=True):
         def objective(theta):
             length_scale, noise = np.exp(theta[:2])
             A = theta[2:].reshape(self.D, -1)
@@ -739,10 +745,11 @@ class MORCGPRegressor_NC_fixed_weights:
             self.A.reshape(-1)
         ))
         res = minimize(objective, initial_theta, method='L-BFGS-B', tol=1e-2,
+               options={'maxiter': 1000})
                     #    bounds=[(np.log(1e-2), np.log(1e2)),     # length_scale
                     #            (np.log(1e-3), np.log(1.0)),     # noise
                     #            (np.log(1e-1), np.log(1e2))]    # rbf_variance
-        )
+        
 
         self.length_scale = np.exp(res.x[0])
         self.noise = np.exp(res.x[1])
@@ -754,7 +761,10 @@ class MORCGPRegressor_NC_fixed_weights:
             print(f"Optimized A: {self.A}")
             print(f"Optimized B: \n{self.B}")
 
-        predictive_means, predictive_variances = self.fit(self.X_train, self.Y_train, self.B, self.noise)
+        if update_weights:
+            predictive_means, predictive_variances = self.fit(self.X_train, self.Y_train, self.B, self.noise)
+        else:
+            predictive_means, predictive_variances = self.fit(self.X_train, self.Y_train, self.B_weighted, self.noise_weighted)
         return predictive_means, predictive_variances
 
 class MORCGPRegressor_fixed_weights:
