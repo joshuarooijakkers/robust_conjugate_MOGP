@@ -84,7 +84,7 @@ def cross_channel_predictive(Y_train, mean, B, noise):
 
         return predictive_means, predictive_variances
 
-@jit(nopython=True, fastmath=True)
+# @jit(nopython=True, fastmath=True)
 def rbf_kernel(X1, X2, length_scale):
     X1 = np.ascontiguousarray(X1)
     X2 = np.ascontiguousarray(X2)
@@ -470,9 +470,12 @@ class MOGPRegressor_NC:
         result = -0.5 * y_centered.T @ alpha - 0.5 * log_det - 0.5 * len(y_centered) * np.log(2 * np.pi)
         return result.item()
 
-    def optimize_hyperparameters(self):
+    def optimize_hyperparameters(self, print_opt_param=False, print_iter_param=False):
         def objective(theta):
-            return -self.log_marginal_likelihood(theta)
+            val = -self.log_marginal_likelihood(theta)
+            if print_iter_param:
+                print(-val)
+            return val
 
         initial_theta = np.concatenate((
             np.log([self.length_scale, self.noise]),
@@ -491,9 +494,10 @@ class MOGPRegressor_NC:
         self.A = res.x[2:].reshape(self.D,-1)
         self.B = self.A @ self.A.T
 
-        print(f"Optimized length_scale: {self.length_scale:.4f}, noise: {self.noise:.6f}")
-        print(f"Optimized A: {self.A}")
-        print(f"Optimized B: \n{self.B}")
+        if print_opt_param:
+            print(f"Optimized length_scale: {self.length_scale:.4f}, noise: {self.noise:.6f}")
+            print(f"Optimized A: {self.A}")
+            print(f"Optimized B: \n{self.B}")
 
         self.fit(self.X_train, self.Y_train)
 
