@@ -807,6 +807,7 @@ class MORCGPRegressor_fixed_weights:
 
         self.w, self.gradient_log_squared = imq_kernel(y_vec, predictive_means.reshape((-1,1), order='F'), beta, np.sqrt(predictive_variances).reshape((-1,1), order='F'))
         self.w01 = self.w[self.valid_idx,:] / beta[self.valid_idx,:]
+        self.w01_plot = self.w/beta
 
         self.mw = self.mean + noise_vec * self.gradient_log_squared
         self.Jw = np.diag((noise_vec.flatten()/2)) @ np.diag((self.w**-2).flatten())
@@ -946,6 +947,7 @@ class MORCGPRegressor_PM:
         ])
         self.cs = np.repeat(c, self.N).reshape(-1, 1)
         self.w, gradient_log_squared = imq_kernel(y_vec, self.mean, beta, self.cs)
+        self.w01_plot = self.w/beta
         self.w01 = self.w[self.valid_idx,:] / beta[self.valid_idx,:]
 
         self.mw = self.mean + noise_vec * gradient_log_squared
