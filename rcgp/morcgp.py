@@ -114,19 +114,16 @@ class MOGPRegressor:
         self.N = len(X_train)
         self.noise_matrix = np.diag(self.noise)
 
-        # Flatten Y_train.T and mask out NaNs
         y_vec = Y_train.T.flatten()
         self.mask = ~np.isnan(y_vec)
         self.valid_idx = np.where(self.mask)[0]
         y_vec = y_vec[self.mask].reshape(-1, 1)
         
         self.y_vec = y_vec
-        # Kernel matrix for all outputs
         full_K = np.kron(self.B, self.rbf_kernel(X_train, X_train, self.length_scale))
         noise_K = np.kron(self.noise_matrix, np.eye(self.N))
         K = full_K + noise_K + 1e-6 * np.eye(self.D * self.N)
 
-        # Subset kernel matrix and solve only for valid indices
         self.K_noise = K[np.ix_(self.mask, self.mask)]
         y_centered = self.y_vec - self.mean
 
@@ -136,7 +133,7 @@ class MOGPRegressor:
     def predict(self, X_test):
         N_test = len(X_test)
         K_s = np.kron(self.B, self.rbf_kernel(self.X_train, X_test, self.length_scale))
-        K_s = K_s[self.valid_idx, :]  # Subset only rows corresponding to observed outputs
+        K_s = K_s[self.valid_idx, :] 
 
         K_ss = np.kron(self.B, self.rbf_kernel(X_test, X_test, self.length_scale)) + \
                1e-6 * np.eye(N_test * self.D)
@@ -144,7 +141,7 @@ class MOGPRegressor:
         mu = K_s.T @ self.alpha + self.mean
         v = solve(self.L, K_s)
         cov = K_ss - v.T @ v
-        var = np.maximum(0, np.diag(cov))  # Avoid small negative variances due to numerical errors
+        var = np.maximum(0, np.diag(cov))
 
         mu = mu.reshape(self.D, -1).T
         var = var.reshape(self.D, -1).T
@@ -408,19 +405,16 @@ class MOGPRegressor_NC:
         self.Y_train = Y_train
         self.N = len(X_train)
 
-        # Flatten Y_train.T and mask out NaNs
         y_vec = Y_train.T.flatten()
         self.mask = ~np.isnan(y_vec)
         self.valid_idx = np.where(self.mask)[0]
         y_vec = y_vec[self.mask].reshape(-1, 1)
         
         self.y_vec = y_vec
-        # Kernel matrix for all outputs
         full_K = np.kron(self.B, rbf_kernel(X_train, X_train, self.length_scale))
         noise_K = np.kron(self.noise * np.eye(self.D), np.eye(self.N))
         K = full_K + noise_K + 1e-6 * np.eye(self.D * self.N)
 
-        # Subset kernel matrix and solve only for valid indices
         self.K_noise = K[np.ix_(self.mask, self.mask)]
         y_centered = self.y_vec - self.mean
 
@@ -431,7 +425,7 @@ class MOGPRegressor_NC:
     def predict(self, X_test):
         N_test = len(X_test)
         K_s = np.kron(self.B, rbf_kernel(self.X_train, X_test, self.length_scale))
-        K_s = K_s[self.valid_idx, :]  # Subset only rows corresponding to observed outputs
+        K_s = K_s[self.valid_idx, :]
 
         K_ss = np.kron(self.B, rbf_kernel(X_test, X_test, self.length_scale)) + \
                1e-6 * np.eye(N_test * self.D)
@@ -439,7 +433,7 @@ class MOGPRegressor_NC:
         mu = K_s.T @ self.alpha + self.mean
         v = solve(self.L, K_s)
         cov = K_ss - v.T @ v
-        var = np.maximum(0, np.diag(cov))  # Avoid small negative variances due to numerical errors
+        var = np.maximum(0, np.diag(cov)) 
 
         mu = mu.reshape(self.D, -1).T
         var = var.reshape(self.D, -1).T
