@@ -1214,10 +1214,11 @@ class MORCGP:
                 2 * X1 @ X2.T
         return np.exp(-0.5 * dists / length_scale**2)
 
-    def fit(self, X_train, Y_train):
+    def fit(self, X_train, Y_train, epsilons=None):
         self.X_train = X_train
         self.Y_train = Y_train
         self.N, _ = Y_train.shape
+        self.epsilons = epsilons
 
         y_vec = Y_train.T.flatten()
         self.valid_idx = np.where(~np.isnan(y_vec))[0]
@@ -1226,7 +1227,8 @@ class MORCGP:
         predictive_means, predictive_variances = cross_channel_predictive(Y_train, self.mean, self.B, self.noise_var)
 
         gamma = predictive_means
-        c = 2 * np.sqrt(predictive_variances)
+        # c = 2 * np.sqrt(predictive_variances)
+        c = np.tile(np.array([np.nanquantile(self.Y_train[:, d] - gamma[:, d], self.epsilons[d]) for d in range(self.D)]), (self.N, 1))
 
         self.w01, gradient_log_squared = scaled_imq_weight(y_vec, gamma.reshape((-1,1), order='F'), c.reshape((-1,1), order='F'))
 
@@ -1267,7 +1269,8 @@ class MORCGP:
         else:
             loo_predictive_means, loo_predictive_variances = cross_channel_predictive(self.Y_train, self.mean, B, noise_var)
             loo_gamma = loo_predictive_means.reshape((-1,1), order='F')
-            loo_c = np.sqrt(loo_predictive_variances).reshape((-1,1), order='F')
+            # loo_c = np.sqrt(loo_predictive_variances).reshape((-1,1), order='F')
+            loo_c = np.tile(np.array([np.nanquantile(self.Y_train[:, d] - loo_gamma[:, d], self.epsilons[d]) for d in range(self.D)]), (self.N, 1))
 
             loo_w01, loo_gradient_log_squared = scaled_imq_weight(self.Y_train.T.reshape(-1,1), loo_gamma, loo_c)
 
@@ -1287,9 +1290,12 @@ class MORCGP:
     def optimize_loo_cv(self, print_opt_param = False, print_iter_objective=False, k=1, init_cov=None, fix_weights=True):
 
         init_predictive_means, init_predictive_variance = cross_channel_predictive(self.Y_train, self.mean, init_cov, 0)
-        init_gamma = init_predictive_means.reshape((-1,1), order='F')
-        init_c = np.sqrt(init_predictive_variance).reshape((-1,1), order='F')
-        self.init_w01, self.init_grad_log2 = scaled_imq_weight(self.Y_train.T.reshape(-1,1), init_gamma, init_c)
+        init_gamma = init_predictive_means
+        # init_c = np.sqrt(init_predictive_variance).reshape((-1,1), order='F')
+        # print('self.Y_train[:, d].shape', self.Y_train[:, 0].shape)
+        # print('init_gamma[:, d].shape', init_gamma[:, 0].shape)
+        init_c = np.tile(np.array([np.nanquantile(self.Y_train[:, d] - init_gamma[:, d], self.epsilons[d]) for d in range(self.D)]), (self.N, 1))
+        self.init_w01, self.init_grad_log2 = scaled_imq_weight(self.Y_train.T.reshape(-1,1), init_gamma.reshape((-1,1), order='F'), init_c.reshape((-1,1), order='F'))
 
         def objective(theta):
             length_scale = np.exp(theta)[0]
@@ -1322,5 +1328,5 @@ class MORCGP:
             print(f"Optimized A: {self.A}")
             print(f"Optimized B: \n{self.B}")
 
-        gamma, c = self.fit(self.X_train, self.Y_train)
+        gamma, c = self.fit(self.X_train, self.Y_train, self.epsilons)
         return gamma, c
