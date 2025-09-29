@@ -1199,7 +1199,7 @@ class MORCGPRegressor2:
         return predictive_means, predictive_variances
     
 class MORCGP:
-    def __init__(self, mean=0.0, length_scale=1.0, noise_var=np.array([1e-2]), A = None):
+    def __init__(self, mean=0.0, length_scale=1.0, noise_var=np.array([0.1]), A = None):
         self.D = A.shape[0]
         self.mean = mean
         self.length_scale = length_scale
@@ -1228,7 +1228,7 @@ class MORCGP:
 
         gamma = predictive_means
         # c = 2 * np.sqrt(predictive_variances)
-        c = np.tile(np.array([np.nanquantile(self.Y_train[:, d] - gamma[:, d], 1 - self.epsilons[d]) for d in range(self.D)]), (self.N, 1))
+        c = np.tile(np.array([np.nanquantile(np.abs(self.Y_train[:, d] - gamma[:, d]), 1 - self.epsilons[d], method='lower') for d in range(self.D)]), (self.N, 1))
 
         self.w01, gradient_log_squared = scaled_imq_weight(y_vec, gamma.reshape((-1,1), order='F'), c.reshape((-1,1), order='F'))
 
@@ -1268,11 +1268,13 @@ class MORCGP:
             loo_w01, loo_gradient_log_squared = self.init_w01, self.init_grad_log2
         else:
             loo_predictive_means, loo_predictive_variances = cross_channel_predictive(self.Y_train, self.mean, B, noise_var)
-            loo_gamma = loo_predictive_means.reshape((-1,1), order='F')
+            loo_gamma = loo_predictive_means
             # loo_c = np.sqrt(loo_predictive_variances).reshape((-1,1), order='F')
-            loo_c = np.tile(np.array([np.nanquantile(self.Y_train[:, d] - loo_gamma[:, d], 1 - self.epsilons[d]) for d in range(self.D)]), (self.N, 1))
+            # print(self.Y_train[:, 0].shape, loo_gamma[:, 0].shape)
+            # print(self.Y_train[:, 0] - loo_gamma[:, 0])
+            loo_c = np.tile(np.array([np.nanquantile(np.abs(self.Y_train[:, d] - loo_gamma[:, d]), 1 - self.epsilons[d], method='lower') for d in range(self.D)]), (self.N, 1))
 
-            loo_w01, loo_gradient_log_squared = scaled_imq_weight(self.Y_train.T.reshape(-1,1), loo_gamma, loo_c)
+            loo_w01, loo_gradient_log_squared = scaled_imq_weight(self.Y_train.T.reshape(-1,1), loo_gamma.reshape((-1,1), order='F'), loo_c)
 
         loo_Jw = np.diag((loo_w01**-2).flatten())
         loo_Kw = loo_K + np.kron(np.diag(noise_var), np.eye(self.N)) @ loo_Jw + 1e-6 * np.eye(self.D * self.N)
@@ -1285,7 +1287,7 @@ class MORCGP:
         loo_var = (1 / loo_Kw_inv_diag) - (noise_var_vec * (loo_w01**-2))[self.valid_idx] + (noise_var_vec.reshape(-1,1))[self.valid_idx,:]
         self.predictive_log_prob = -0.5 * np.log(loo_var) - 0.5 * (loo_mean - self.y_vec)**2/loo_var - 0.5 * np.log(np.pi * 2)
 
-        return np.dot(self.predictive_log_prob.flatten(), self.init_w01.flatten()**k)
+        return np.dot(self.predictive_log_prob.flatten(), self.init_w01[self.valid_idx, :].flatten()**k)
     
     def optimize_loo_cv(self, print_opt_param = False, print_iter_objective=False, k=1, init_cov=None, fix_weights=True):
 
@@ -1294,7 +1296,7 @@ class MORCGP:
         # init_c = np.sqrt(init_predictive_variance).reshape((-1,1), order='F')
         # print('self.Y_train[:, d].shape', self.Y_train[:, 0].shape)
         # print('init_gamma[:, d].shape', init_gamma[:, 0].shape)
-        init_c = np.tile(np.array([np.nanquantile(self.Y_train[:, d] - init_gamma[:, d], 1 - self.epsilons[d]) for d in range(self.D)]), (self.N, 1))
+        init_c = np.tile(np.array([np.nanquantile(np.abs(self.Y_train[:, d] - init_gamma[:, d]), 1 - self.epsilons[d], method='lower') for d in range(self.D)]), (self.N, 1))
         self.init_w01, self.init_grad_log2 = scaled_imq_weight(self.Y_train.T.reshape(-1,1), init_gamma.reshape((-1,1), order='F'), init_c.reshape((-1,1), order='F'))
 
         def objective(theta):
@@ -1329,4 +1331,4 @@ class MORCGP:
             print(f"Optimized B: \n{self.B}")
 
         gamma, c = self.fit(self.X_train, self.Y_train, self.epsilons)
-        return gamma, c
+        return init_gamma, init_c, gamma, c
