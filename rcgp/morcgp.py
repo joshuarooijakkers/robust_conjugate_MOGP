@@ -1313,7 +1313,8 @@ class MORCGP:
             np.log(self.noise_var),
             self.A.reshape(-1)
         ))
-        res = minimize(objective, initial_theta, method='L-BFGS-B', tol=1e-2,
+        res = minimize(objective, initial_theta, method='L-BFGS-B', 
+                    #    tol=1e-2,
                     #    bounds=[(np.log(1e-2), np.log(1e2)),     # length_scale
                     #            (np.log(1e-3), np.log(1.0)),     # noise_var
                     #            (np.log(1e-1), np.log(1e2))]    # rbf_variance
@@ -1412,7 +1413,7 @@ class MORCGP_shared_noise:
             loo_w01, loo_gradient_log_squared = scaled_imq_weight(self.Y_train.T.reshape(-1,1), loo_gamma.reshape((-1,1), order='F'), loo_c)
 
         loo_Jw = np.diag((loo_w01**-2).flatten())
-        loo_Kw = loo_K + noise_var * np.eye(self.N*self.D) @ loo_Jw + 1e-6 * np.eye(self.D * self.N)
+        loo_Kw = loo_K + noise_var * np.eye(self.N*self.D) @ loo_Jw + 1e-4 * np.eye(self.D * self.N)
         loo_Kw_inv = np.linalg.inv(loo_Kw[np.ix_(self.valid_idx, self.valid_idx)])
         loo_Kw_inv_diag = np.diag(loo_Kw_inv).reshape(-1,1)
         z = self.y_vec - self.mean - (noise_var_vec * loo_gradient_log_squared)[self.valid_idx,:]
