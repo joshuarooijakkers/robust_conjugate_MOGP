@@ -8,31 +8,6 @@ class ConstantMean:
         """Compute the constant mean vector."""
         return np.full((X.shape[0], 1), self.constant)
 
-class SineMean:
-    def __init__(self, amplitude=1.0, frequency=1.0, phase=0.0):
-        self.amplitude = amplitude
-        self.frequency = frequency
-        self.phase = phase
-
-    def __call__(self, X):
-        """
-        Compute the sine mean vector.
-        Applies sine to the first dimension of X.
-        """
-        return self.amplitude * np.sin(self.frequency * X[:, [0]] + self.phase)
-    
-class LinearMean:
-    def __init__(self, slope=1.0, intercept=-0.5):
-        self.slope = slope
-        self.intercept = intercept
-
-    def __call__(self, X):
-        """
-        Compute the linear mean vector.
-        Applies y = slope * x + intercept to the first dimension of X.
-        """
-        return self.slope * X[:, [0]] + self.intercept
-
 class RBFKernel:
     def __init__(self, lengthscale=1.0, variance=1.0):
         self.lengthscale = lengthscale
