@@ -426,7 +426,7 @@ class MORCGPRegressor_PM:
         beta = (noise_vec / 2)**0.5
 
         c = np.array([
-            np.nanquantile(self.Y_train[:, d], self.epsilons[d])
+            np.nanquantile(np.abs(self.Y_train[:, d] - self.mean), 1 - self.epsilons[d], method='lower')
             for d in range(self.D)
         ])
         self.cs = np.repeat(c, self.N).reshape(-1, 1)
