@@ -230,7 +230,7 @@ class MOGPRegressor:
 
         self.fit(self.X_train, self.Y_train)
 
-    def loo_cv(self, length_scale, noise, A):
+    def loo_cv(self, length_scale, noise, A, k=0):
         B = A @ A.T
         loo_K = np.kron(B, self.rbf_kernel(self.X_train, self.X_train, length_scale))
         loo_K_noise = loo_K + np.kron(np.diag(noise), np.eye(self.N)) + 1e-6 * np.eye(self.D * self.N)
@@ -243,14 +243,20 @@ class MOGPRegressor:
 
         predictive_log_prob = -0.5 * np.log(loo_var) - 0.5 * (loo_mean - self.y_vec)**2/loo_var - 0.5 * np.log(np.pi * 2)
 
-        return np.sum(predictive_log_prob)
+        return np.dot(predictive_log_prob.flatten(), self.init_w01[self.valid_idx, :].flatten()**k)
     
-    def optimize_loo_cv(self, print_opt_param=False, print_iter_param=False):
+    def optimize_loo_cv(self, print_opt_param=False, print_iter_param=False, k=0, init_cov=None, epsilons=None):
+
+        init_predictive_means, init_predictive_variance = cross_channel_predictive(self.Y_train, self.mean, init_cov, 0)
+        init_gamma = init_predictive_means
+        init_c = np.tile(np.array([np.nanquantile(np.abs(self.Y_train[:, d] - init_gamma[:, d]), 1 - epsilons[d], method='lower') for d in range(self.D)]), (self.N, 1))
+        self.init_w01, self.init_grad_log2 = scaled_imq_weight(self.Y_train.T.reshape(-1,1), init_gamma.reshape((-1,1), order='F'), init_c.reshape((-1,1), order='F'))
+
         def objective(theta):
             length_scale = np.exp(theta)[0]
             noise = np.exp(theta)[1:self.D+1]
             A = theta[self.D+1:].reshape(self.D, -1)
-            val = -self.loo_cv(length_scale, noise, A)
+            val = -self.loo_cv(length_scale, noise, A, k=k)
             if print_iter_param:
                 print(-val)
             return val
@@ -457,7 +463,7 @@ class MORCGPRegressor_PM:
 
         return mu, var
     
-    def loo_cv(self, length_scale, noise, A, weighted=False):        
+    def loo_cv(self, length_scale, noise, A, k=2):        
         B = A @ A.T
         loo_K = np.kron(B, self.rbf_kernel(self.X_train, self.X_train, length_scale))
 
@@ -478,21 +484,15 @@ class MORCGPRegressor_PM:
         loo_var = (1 / loo_Kw_inv_diag) - ((noise_vec**2 / 2) * (loo_w**-2))[self.valid_idx] + (noise_vec.reshape(-1,1))[self.valid_idx,:]
         self.predictive_log_prob = -0.5 * np.log(loo_var) - 0.5 * (loo_mean - self.y_vec)**2/loo_var - 0.5 * np.log(np.pi * 2)
 
-        if weighted:
-            result = np.dot(self.predictive_log_prob.flatten(), (self.w01.flatten())**2)
-        else:
-            result = np.sum(self.predictive_log_prob)
+        result = np.dot(self.predictive_log_prob.flatten(), (self.w01.flatten())**k)
         return result
     
-    def optimize_loo_cv(self, weighted=False, print_opt_param = False, print_iter_param=False):
+    def optimize_loo_cv(self, k=2, print_opt_param = False, print_iter_param=False):
         def objective(theta):
             length_scale = np.exp(theta)[0]
             noise = np.exp(theta)[1:self.D+1]
             A = theta[self.D+1:].reshape(self.D, -1)
-            if weighted:
-                val = -self.loo_cv(length_scale, noise, A, weighted=True)
-            else:
-                val = -self.loo_cv(length_scale, noise, A, weighted=False)
+            val = -self.loo_cv(length_scale, noise, A, k=k)
             if print_iter_param:
                 print(-val)
             return val
