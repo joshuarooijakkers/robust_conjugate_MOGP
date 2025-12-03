@@ -1,22 +1,16 @@
 # robust_conjugate_MOGP
 
-This repository contains the code and experiments for our paper, *Robust and Conjugate Multi-Output Gaussian Processes*. It includes preprocessing scripts, model training code, and evaluation utilities used to reproduce the main results.
+This repository contains the code and experiments for our paper, *Robust and Conjugate Multi-Output Gaussian Processes*. 
 
 [📄 Read the paper on arXiv](https://arxiv.org/abs/2510.26401)
+
+This repository includes preprocessing scripts, model training code, and evaluation utilities used to reproduce the main results.
 
 ## Quick Start
 
 ```bash
 git clone https://github.com/joshuarooijakkers/robust_conjugate_MOGP.git
 cd robust_conjugate_MOGP
-pip install -r requirements.txt
-```
-
-## Project Structure
-```bash
-git clone https://github.com/joshuarooijakkers/robust_conjugate_MOGP.git
-cd robust_conjugate_MOGP
-pip install -r requirements.txt
 ```
 
 ## Citation
