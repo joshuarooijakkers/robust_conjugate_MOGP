@@ -1,6 +1,6 @@
 # robust_conjugate_MOGP
 
-This repository contains the code and experiments for our paper, *Robust and Conjugate Multi-Output Gaussian Processes*. 
+This repository contains the code and experiments for the paper, *Robust and Conjugate Multi-Output Gaussian Processes*. It provides several robust multi-output Gaussian process regression methods.
 
 [📄 Read the paper on arXiv](https://arxiv.org/abs/2510.26401)
 
